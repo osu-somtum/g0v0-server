@@ -134,6 +134,18 @@ async def register_user(
     Returns:
         JSONResponse with registration result or validation errors.
     """
+    # Somtum dual-bancho: bancho.py's `users` table is the single source of
+    # truth for accounts (one account logs into both osu!stable and lazer).
+    # New accounts must be created through bancho.py / the Somtum frontend so
+    # that user IDs only ever originate in one place; the `users` -> lazer_users
+    # sync triggers then mirror them here. g0v0's own registration is disabled
+    # in this deployment. See DUAL_BANCHO_PLAN.md Phase 1.
+    if not settings.enable_user_registration:
+        errors = RegistrationRequestErrors(
+            message="Registration is handled by the main Somtum site. Please sign up there.",
+        )
+        return JSONResponse(status_code=403, content={"form_error": errors.model_dump()})
+
     # Turnstile verification (only for non-osu! clients)
     if settings.enable_turnstile_verification and not user_agent.is_client:
         success, error_msg = await turnstile_service.verify_token(cf_turnstile_response, client_ip)

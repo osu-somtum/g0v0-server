@@ -159,6 +159,11 @@ class Settings(BaseSettings):
         bool, Field(default=False, validation_alias=AliasChoices("enable_ap", "enable_osu_ap")), "game"
     ]
     enable_supporter_for_all_users: Annotated[bool, Field(default=False), "game"]
+    # Dual-bancho: when False, g0v0's own registration endpoint is disabled so
+    # accounts only ever originate in bancho.py (the login source of truth) and
+    # user IDs never diverge between the two servers. See DUAL_BANCHO_PLAN.md
+    # Phase 1. Default True preserves g0v0's standalone behaviour.
+    enable_user_registration: Annotated[bool, Field(default=True), "game"]
     enable_all_beatmap_leaderboard: Annotated[bool, Field(default=False), "game"]
     enable_all_beatmap_pp: Annotated[bool, Field(default=False), "game"]
     seasonal_backgrounds: Annotated[list[str], Field(default=[]), "game"]
