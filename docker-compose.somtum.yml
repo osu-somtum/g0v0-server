@@ -55,9 +55,10 @@ services:
       - MYSQL_HOST=mysql
       - MYSQL_PORT=3306
       - SHARED_INTEROP_DOMAIN=http://somtum-g0v0:8000
-      # spectator hard-requires a syntactically-valid Sentry DSN; this one points
-      # nowhere (send failures are swallowed) so we don't ship telemetry anywhere.
-      - SENTRY_DSN=https://0123456789abcdef0123456789abcdef@localhost/1
+      # The spectator reads SP_SENTRY_DSN (NOT SENTRY_DSN) and the Sentry SDK
+      # requires a project-id path. This dummy DSN is format-valid but resolves
+      # nowhere (send failures are swallowed) — no real Sentry account / telemetry.
+      - SP_SENTRY_DSN=https://public@sentry.example.com/1
       # SHARED_INTEROP_SECRET + MYSQL_USER/PASSWORD/DATABASE come from .env
     dns:
       - 1.1.1.1
