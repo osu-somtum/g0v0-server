@@ -1,0 +1,43 @@
+# Somtum dual-bancho: run ONLY the g0v0 app, sharing bancho.py's MySQL + Redis.
+#
+# - No bundled mysql/redis/performance-server. g0v0 reaches bancho's `mysql`
+#   and `redis` over the existing `banchopy_default` podman network.
+# - DB = `lazer` (separate database on the same MySQL server as bancho's
+#   `freedomdive_db`), so g0v0's own tables never collide with bancho's.
+# - CALCULATOR=rosu (native in-process pp), so the performance-server
+#   container is not required just to boot / prove shared login.
+# - Named volumes (not host bind mounts) for app dirs, to avoid podman
+#   rootless userns permission errors on ./plugins, ./config, etc.
+# - All secrets + DB/redis wiring live in .env.
+#
+# Usage:
+#   podman compose -f docker-compose.somtum.yml up -d --build
+services:
+  g0v0:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: g0v0-somtum:latest
+    container_name: somtum-g0v0
+    env_file:
+      - .env
+    ports:
+      - "0.0.0.0:8000:8000"
+    volumes:
+      - g0v0-replays:/app/replays
+      - g0v0-storage:/app/storage
+      - g0v0-logs:/app/logs
+      - g0v0-config:/app/config
+    restart: unless-stopped
+    networks:
+      - banchopy_default
+
+networks:
+  banchopy_default:
+    external: true
+
+volumes:
+  g0v0-replays:
+  g0v0-storage:
+  g0v0-logs:
+  g0v0-config:

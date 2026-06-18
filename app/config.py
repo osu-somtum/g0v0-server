@@ -166,6 +166,14 @@ class Settings(BaseSettings):
     enable_user_registration: Annotated[bool, Field(default=True), "game"]
     enable_all_beatmap_leaderboard: Annotated[bool, Field(default=False), "game"]
     enable_all_beatmap_pp: Annotated[bool, Field(default=False), "game"]
+    # Dual-bancho read-only slice: when False, the lazer server refuses score
+    # submission / per-beatmap leaderboards / global rankings respectively. Used
+    # by the Somtum deployment to ship lazer as login + read-only profile first,
+    # before the unified score store exists. Default True preserves g0v0's
+    # standalone behaviour. See DUAL_BANCHO_PLAN.md.
+    enable_score_submission: Annotated[bool, Field(default=True), "game"]
+    enable_beatmap_leaderboard: Annotated[bool, Field(default=True), "game"]
+    enable_global_rankings: Annotated[bool, Field(default=True), "game"]
     seasonal_backgrounds: Annotated[list[str], Field(default=[]), "game"]
     beatmap_tag_top_count: Annotated[int, Field(default=2), "game"]
     old_score_processing_mode: Annotated[OldScoreProcessingMode, Field(default=OldScoreProcessingMode.NORMAL), "game"]

@@ -79,6 +79,7 @@ from fastapi import (
     Body,
     Depends,
     Form,
+    HTTPException,
     Path,
     Query,
     Response,
@@ -93,6 +94,16 @@ from sqlmodel import col, exists, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 READ_SCORE_TIMEOUT = 10
+
+
+def _require_enabled(flag: bool, feature: str) -> None:
+    """Raise 403 when a Somtum dual-bancho read-only flag disables a feature.
+
+    In the read-only lazer slice the server accepts login + profile reads but
+    refuses score submission and per-beatmap leaderboards. See DUAL_BANCHO_PLAN.md.
+    """
+    if not flag:
+        raise HTTPException(status_code=403, detail=f"{feature} is disabled on this server.")
 
 logger = log("Score")
 
@@ -357,6 +368,8 @@ async def get_beatmap_scores(
     Returns:
         dict: Leaderboard scores with user score and count.
     """
+    _require_enabled(settings.enable_beatmap_leaderboard, "Beatmap leaderboards")
+
     all_scores, user_score, count = await get_leaderboard(
         db,
         beatmap_id,
@@ -574,6 +587,8 @@ async def create_solo_score(
     Raises:
         RequestError: If validation fails.
     """
+    _require_enabled(settings.enable_score_submission, "Score submission")
+
     # Get user ID immediately to avoid lazy loading issues
     user_id = current_user.id
 
@@ -679,6 +694,8 @@ async def submit_solo_score(
     Returns:
         dict: The submitted score.
     """
+    _require_enabled(settings.enable_score_submission, "Score submission")
+
     hub.emit(
         SoloScoreSubmittedEvent(
             submission_info=info,
@@ -730,6 +747,8 @@ async def create_playlist_score(
     Raises:
         RequestError: If validation fails.
     """
+    _require_enabled(settings.enable_score_submission, "Score submission")
+
     try:
         gamemode = GameMode.from_int(ruleset_id)
     except ValueError:
@@ -873,6 +892,8 @@ async def submit_playlist_score(
     Raises:
         RequestError: If validation fails.
     """
+    _require_enabled(settings.enable_score_submission, "Score submission")
+
     if await current_user.is_restricted(session):
         raise RequestError(ErrorType.ACCOUNT_RESTRICTED)
 

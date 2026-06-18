@@ -16,7 +16,11 @@ ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 COPY pyproject.toml uv.lock ./
 COPY packages/ ./packages/
 
-RUN uv sync --frozen --no-dev
+# Somtum dual-bancho: install the `rosu` extra so g0v0 can run the native
+# in-process rosu-pp calculator (CALCULATOR=rosu). This is the single pp
+# authority for the shared deployment and avoids needing the separate
+# performance-server container. See DUAL_BANCHO_PLAN.md.
+RUN uv sync --frozen --no-dev --extra rosu
 
 COPY alembic.ini ./
 COPY tools/ ./tools/

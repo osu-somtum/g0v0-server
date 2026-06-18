@@ -17,9 +17,20 @@ from app.service.ranking_cache_service import get_ranking_cache_service
 
 from .router import router
 
-from fastapi import BackgroundTasks, Path, Query, Security
+from fastapi import BackgroundTasks, HTTPException, Path, Query, Security
 from pydantic import BaseModel, Field
 from sqlmodel import col, func, select
+
+
+def _require_global_rankings_enabled() -> None:
+    """Raise 403 when the Somtum dual-bancho read-only slice disables rankings.
+
+    The lazer server ships login + own-profile reads first; global/country/team
+    leaderboards stay hidden until the unified score store exists. See
+    DUAL_BANCHO_PLAN.md.
+    """
+    if not settings.enable_global_rankings:
+        raise HTTPException(status_code=403, detail="Rankings are disabled on this server.")
 
 
 class TeamStatistics(BaseModel):
@@ -124,6 +135,8 @@ async def get_team_ranking(
     Returns:
         TeamResponse: Team rankings with statistics.
     """
+    _require_global_rankings_enabled()
+
     # Get Redis connection and cache service
     redis = get_redis()
     cache_service = get_ranking_cache_service(redis)
@@ -317,6 +330,8 @@ async def get_country_ranking(
     Returns:
         CountryResponse: Country rankings with statistics.
     """
+    _require_global_rankings_enabled()
+
     # Get Redis connection and cache service
     redis = get_redis()
     cache_service = get_ranking_cache_service(redis)
@@ -438,6 +453,8 @@ async def get_user_ranking(
     Returns:
         dict: User rankings with statistics and total count.
     """
+    _require_global_rankings_enabled()
+
     # Get Redis connection and cache service
     redis = get_redis()
     cache_service = get_ranking_cache_service(redis)
