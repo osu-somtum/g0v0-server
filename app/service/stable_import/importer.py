@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -22,6 +21,7 @@ from app.models.score import GameMode, HitResult
 
 from .bancho_db import fetch_custom_maps, fetch_map_by_md5, fetch_new_scores, get_bancho_engine
 from .mappings import empty_covers, grade_to_rank, int_mods_to_apimods, map_status_to_g0v0, osu_covers
+from .replay import build_osr
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -162,10 +162,15 @@ async def _import_one(
     bancho_score = int(row["score"])
     # g0v0/lazer's `total_score` is a *standardised* score (0..MAX_SCORE=1,000,000) that
     # the client converts for display (classic mode multiplies by object_count², so a
-    # raw stable score here explodes to billions). We don't have the true lazer score
-    # for an imported stable play, so approximate it from accuracy. The real stable
-    # score is kept in `classic_total_score`.
-    standardised = round(MAX_SCORE * (float(row["acc"]) / 100.0))
+    # raw stable score here explodes to billions). Approximate the lazer ScoreV2 number
+    # like osu!'s legacy converter: ~70% combo + ~30% accuracy, then the Classic (CL)
+    # mod's 0.96x nerf. Combo portion from max-combo ratio (we lack the hit-by-hit
+    # timeline). The real stable score is kept in `classic_total_score`.
+    acc_fraction = float(row["acc"]) / 100.0
+    bm = await session.get(Beatmap, beatmap_id)
+    bm_max_combo = int(bm.max_combo) if bm is not None and bm.max_combo else 0
+    combo_ratio = min(int(row["max_combo"]) / bm_max_combo, 1.0) if bm_max_combo > 0 else acc_fraction
+    standardised = round((0.7 * MAX_SCORE * combo_ratio + 0.3 * MAX_SCORE * acc_fraction) * 0.96)
 
     score = Score(
         beatmap_id=beatmap_id,
@@ -199,14 +204,18 @@ async def _import_one(
     session.add(score)
     await session.flush()  # populate score.id
 
-    # Bridge the stable .osr so the score's replay is watchable from leaderboards.
+    # Bridge the replay so the score is watchable from leaderboards. bancho stores
+    # ONLY the raw replay payload (no .osr header); lazer needs a full .osr, so wrap
+    # it with a proper header built from the score row.
     if has_replay:
         try:
+            raw = osr_src.read_bytes()
+            osr = build_osr(row, str(row.get("username") or ""), raw, online_id=score.id)
             dest = Path(settings.stable_replay_dir) / f"{score.id}_{beatmap_id}_{int(row['userid'])}_lazer_replay.osr"
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(osr_src, dest)
+            dest.write_bytes(osr)
         except OSError as e:
-            logger.warning("Replay copy failed for score {sid}: {e}", sid=score.id, e=e)
+            logger.warning("Replay bridge failed for score {sid}: {e}", sid=score.id, e=e)
 
     await session.execute(
         text("INSERT INTO stable_score_map (bancho_id, lazer_id) VALUES (:b, :l)"),

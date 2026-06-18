@@ -35,13 +35,16 @@ async def fetch_new_scores(conn: AsyncConnection, since_id: int, limit: int = 50
         await conn.execute(
             text(
                 """
-                SELECT id, map_md5, score, pp, acc, max_combo, mods, grade, status,
-                       mode, play_time, userid, n300, n100, n50, nmiss, ngeki, nkatu
-                FROM scores
-                WHERE id > :since
-                  AND userid <> 1
-                  AND mode IN (0, 1, 2, 3)
-                ORDER BY id
+                SELECT s.id, s.map_md5, s.score, s.pp, s.acc, s.max_combo, s.mods,
+                       s.grade, s.status, s.mode, s.play_time, s.userid, s.perfect,
+                       s.n300, s.n100, s.n50, s.nmiss, s.ngeki, s.nkatu,
+                       u.name AS username
+                FROM scores s
+                JOIN users u ON u.id = s.userid
+                WHERE s.id > :since
+                  AND s.userid <> 1
+                  AND s.mode IN (0, 1, 2, 3)
+                ORDER BY s.id
                 LIMIT :limit
                 """,
             ),
