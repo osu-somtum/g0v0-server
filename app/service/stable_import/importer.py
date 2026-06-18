@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
+
+from app.config import settings
 
 from app.database.beatmap import Beatmap
 from app.database.beatmap_playcounts import process_beatmap_playcount
@@ -149,6 +153,8 @@ async def _import_one(
     gamemode = GameMode.from_int(int(row["mode"]))
     apimods = int_mods_to_apimods(int(row["mods"]))
     rank = grade_to_rank(row["grade"])
+    osr_src = Path(settings.bancho_osr_dir) / f"{int(row['id'])}.osr"
+    has_replay = osr_src.is_file()
     total_hits = int(row["n300"]) + int(row["n100"]) + int(row["n50"]) + int(row["nmiss"]) + int(row["ngeki"]) + int(
         row["nkatu"]
     )
@@ -166,7 +172,6 @@ async def _import_one(
         pp=float(row["pp"]),  # Akatsuki pp, copied verbatim
         started_at=row["play_time"],
         ended_at=row["play_time"],
-        has_replay=False,
         map_md5=row["map_md5"],
         mods=apimods,
         n300=int(row["n300"]),
@@ -182,9 +187,19 @@ async def _import_one(
         preserve=passed,
         processed=True,
         ranked=True,
+        has_replay=has_replay,
     )
     session.add(score)
     await session.flush()  # populate score.id
+
+    # Bridge the stable .osr so the score's replay is watchable from leaderboards.
+    if has_replay:
+        try:
+            dest = Path(settings.stable_replay_dir) / f"{score.id}_{beatmap_id}_{int(row['userid'])}_lazer_replay.osr"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(osr_src, dest)
+        except OSError as e:
+            logger.warning("Replay copy failed for score {sid}: {e}", sid=score.id, e=e)
 
     await session.execute(
         text("INSERT INTO stable_score_map (bancho_id, lazer_id) VALUES (:b, :l)"),

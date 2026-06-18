@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     enable_stable_score_import: Annotated[bool, Field(default=False), "stable_import"]
     stable_import_interval_seconds: Annotated[int, Field(default=300), "stable_import"]
     bancho_database: Annotated[str, Field(default="freedomdive_db"), "stable_import"]
+    # bancho's replay (.osr) dir, mounted read-only into this container, and the
+    # local replays output dir (under the storage root). Used to bridge replays so
+    # leaderboard scores are watchable. Local-storage assumption.
+    bancho_osr_dir: Annotated[str, Field(default="/bancho-osr"), "stable_import"]
+    stable_replay_dir: Annotated[str, Field(default="/app/storage/replays"), "stable_import"]
 
     @property
     def bancho_database_url(self) -> str:

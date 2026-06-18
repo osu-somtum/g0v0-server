@@ -36,6 +36,9 @@ services:
       - g0v0-storage:/app/storage
       - g0v0-logs:/app/logs
       - g0v0-config:/app/config
+      # bancho's stable replays (read-only) so the importer can bridge .osr files
+      # into g0v0 storage → leaderboard replays are watchable. See app/service/stable_import.
+      - ../bancho.py/.data/osr:/bancho-osr:ro
     restart: unless-stopped
     networks:
       - banchopy_default
