@@ -75,6 +75,17 @@ def _parse_list(v: Any):
     return v
 
 
+def _parse_played(v: Any):
+    """osu! sends played=played|unplayed (string); older/bool inputs are coerced."""
+    if isinstance(v, bool):
+        return "played" if v else None
+    if v in (None, "", "null", "all"):
+        return None
+    if v in ("played", "unplayed"):
+        return v
+    return None
+
+
 class SearchQueryModel(BaseModel):
     """Beatmap search query parameters model."""
 
@@ -171,9 +182,9 @@ class SearchQueryModel(BaseModel):
     r: Annotated[list[Rank], BeforeValidator(_parse_list), PlainSerializer(lambda x: ".".join(x))] = Field(
         default_factory=list, description="Achieved ranks"
     )
-    played: bool = Field(
-        default=False,
-        description="Played before",
+    played: Annotated[Literal["played", "unplayed"] | None, BeforeValidator(_parse_played)] = Field(
+        default=None,
+        description="Played filter: played / unplayed (osu! sends a string, not a bool)",
     )
     nsfw: bool = Field(
         default=False,

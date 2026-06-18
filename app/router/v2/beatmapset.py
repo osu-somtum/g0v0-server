@@ -16,6 +16,7 @@ from app.database import (
     SearchBeatmapsetsResp,
     User,
 )
+from app.database.beatmap_playcounts import BeatmapPlaycounts
 from app.dependencies.beatmap_download import DownloadService
 from app.dependencies.cache import BeatmapsetCacheService, UserCacheService
 from app.dependencies.database import Database, Redis
@@ -51,6 +52,32 @@ SOMTUM_SET_ID_FLOOR = 100_000_000
 async def _search_local_custom(session, query: SearchQueryModel) -> list:
     """Local search over somtum custom beatmapsets (osu! API can't return them)."""
     stmt = select(Beatmapset).where(col(Beatmapset.id) >= SOMTUM_SET_ID_FLOOR)
+    q = (query.q or "").strip()
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                col(Beatmapset.title).ilike(like),
+                col(Beatmapset.artist).ilike(like),
+                col(Beatmapset.creator).ilike(like),
+            ),
+        )
+    stmt = stmt.order_by(col(Beatmapset.id).desc()).limit(50)
+    sets = (await session.exec(stmt)).all()
+    includes = [*Beatmapset.BEATMAPSET_TRANSFORMER_INCLUDES, "beatmaps", "beatmaps.max_combo", "pack_tags"]
+    return [await BeatmapsetModel.transform(bs, session=session, includes=includes) for bs in sets]
+
+
+async def _search_user_played(session, user_id: int, query: SearchQueryModel) -> list:
+    """The osu! 'Played' filter, answered locally from the user's playcounts
+    (osu!'s API can't know a somtum user's play history)."""
+    stmt = (
+        select(Beatmapset)
+        .join(Beatmap, col(Beatmap.beatmapset_id) == col(Beatmapset.id))
+        .join(BeatmapPlaycounts, col(BeatmapPlaycounts.beatmap_id) == col(Beatmap.id))
+        .where(col(BeatmapPlaycounts.user_id) == user_id)
+        .distinct()
+    )
     q = (query.q or "").strip()
     if q:
         like = f"%{q}%"
@@ -130,10 +157,15 @@ async def search_beatmapset(
                 except ValueError:
                     cursor[field_name] = field_value
 
+    # "Played" filter: answer locally from the user's playcounts (osu! can't know a
+    # somtum account's play history). Handle before the not-yet-implemented filters.
+    if query.played == "played":
+        played_sets = await _search_user_played(session, current_user.id, query)
+        return SearchBeatmapsetsResp(total=len(played_sets), beatmapsets=played_sets)
+
     if (
         "recommended" in query.c
         or len(query.r) > 0
-        or query.played
         or "follows" in query.c
         or "mine" in query.s
         or "favourites" in query.s
