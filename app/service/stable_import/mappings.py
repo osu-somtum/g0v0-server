@@ -99,6 +99,16 @@ def map_status_to_g0v0(status: int) -> BeatmapRankStatus:
     return _STATUS_MAP.get(status, BeatmapRankStatus.PENDING)
 
 
+_COVER_KEYS = ("cover", "cover@2x", "card", "card@2x", "list", "list@2x", "slimcover", "slimcover@2x")
+
+
+def empty_covers() -> dict[str, str]:
+    """Non-null covers for custom maps (no osu! art). osu!lazer's Covers struct is
+    NOT nullable — a null `covers` breaks deserialization of the whole beatmap
+    listing, so custom sets must carry an (empty) covers object, not None."""
+    return {k: "" for k in _COVER_KEYS}
+
+
 def osu_covers(set_id: int) -> dict[str, str]:
     """Standard osu! CDN cover set for an osu!-origin beatmapset."""
     base = f"https://assets.ppy.sh/beatmaps/{set_id}/covers"

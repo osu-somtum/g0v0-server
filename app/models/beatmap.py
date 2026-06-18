@@ -86,6 +86,23 @@ def _parse_played(v: Any):
     return None
 
 
+_LANGUAGE_NAMES = frozenset(
+    {
+        "any", "unspecified", "english", "japanese", "chinese", "instrumental",
+        "korean", "french", "german", "swedish", "spanish", "italian", "russian",
+        "polish", "other",
+    },
+)
+
+
+def _parse_language(v: Any):
+    """osu! sends `l` as a numeric language id; our model uses name strings. Map
+    unknown/numeric values to "any" (no filter) instead of 422-ing the search."""
+    if isinstance(v, str) and v in _LANGUAGE_NAMES:
+        return v
+    return "any"
+
+
 class SearchQueryModel(BaseModel):
     """Beatmap search query parameters model."""
 
@@ -122,7 +139,8 @@ class SearchQueryModel(BaseModel):
             "qualified / loved / favourites / pending / wip / graveyard / mine"
         ),
     )
-    l: Literal[  # noqa: E741
+    l: Annotated[  # noqa: E741
+        Literal[
         "any",
         "unspecified",
         "english",
@@ -138,6 +156,8 @@ class SearchQueryModel(BaseModel):
         "russian",
         "polish",
         "other",
+        ],
+        BeforeValidator(_parse_language),
     ] = Field(
         default="any",
         description=(

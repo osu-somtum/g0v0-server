@@ -16,7 +16,7 @@ from app.log import log
 from app.models.score import GameMode, HitResult
 
 from .bancho_db import fetch_custom_maps, fetch_map_by_md5, fetch_new_scores, get_bancho_engine
-from .mappings import grade_to_rank, int_mods_to_apimods, map_status_to_g0v0, osu_covers
+from .mappings import empty_covers, grade_to_rank, int_mods_to_apimods, map_status_to_g0v0, osu_covers
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -90,7 +90,7 @@ async def _create_beatmap(session: AsyncSession, m: Mapping[str, Any]) -> None:
                 user_id=owner,
                 video=False,
                 beatmap_status=map_status_to_g0v0(int(m["status"])),
-                covers=osu_covers(set_id) if is_osu else None,
+                covers=osu_covers(set_id) if is_osu else empty_covers(),
                 preview_url=f"//b.ppy.sh/preview/{set_id}.mp3" if is_osu else "",
                 last_updated=m["last_update"],
                 submitted_date=m["last_update"],
