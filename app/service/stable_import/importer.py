@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.const import MAX_SCORE
 
 from app.database.beatmap import Beatmap
 from app.database.beatmap_playcounts import process_beatmap_playcount
@@ -159,6 +160,12 @@ async def _import_one(
         row["nkatu"]
     )
     bancho_score = int(row["score"])
+    # g0v0/lazer's `total_score` is a *standardised* score (0..MAX_SCORE=1,000,000) that
+    # the client converts for display (classic mode multiplies by object_count², so a
+    # raw stable score here explodes to billions). We don't have the true lazer score
+    # for an imported stable play, so approximate it from accuracy. The real stable
+    # score is kept in `classic_total_score`.
+    standardised = round(MAX_SCORE * (float(row["acc"]) / 100.0))
 
     score = Score(
         beatmap_id=beatmap_id,
@@ -181,8 +188,8 @@ async def _import_one(
         ngeki=int(row["ngeki"]),
         nkatu=int(row["nkatu"]),
         maximum_statistics={HitResult.GREAT: total_hits},
-        total_score=bancho_score,
-        total_score_without_mods=bancho_score,
+        total_score=standardised,
+        total_score_without_mods=standardised,
         classic_total_score=bancho_score,
         preserve=passed,
         processed=True,
@@ -227,7 +234,7 @@ async def _import_one(
                 score_id=score.id,
                 beatmap_id=beatmap_id,
                 gamemode=gamemode,
-                total_score=bancho_score,
+                total_score=standardised,
                 mods=[m["acronym"] for m in apimods],
                 rank=rank,
             ),
