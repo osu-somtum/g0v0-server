@@ -69,6 +69,25 @@ async def fetch_map_by_md5(conn: AsyncConnection, md5: str) -> Mapping[str, Any]
     return row
 
 
+async def fetch_custom_maps(conn: AsyncConnection) -> list[Mapping[str, Any]]:
+    """All somtum custom (private) maps — these don't exist on osu! so must be
+    bridged locally for lazer browse/search."""
+    rows = (
+        await conn.execute(
+            text(
+                """
+                SELECT server, id, set_id, status, md5, artist, title, version, creator,
+                       last_update, total_length, max_combo, mode, bpm, cs, ar, od, hp,
+                       diff, owner_id
+                FROM maps
+                WHERE server = 'private'
+                """,
+            ),
+        )
+    ).mappings().all()
+    return list(rows)
+
+
 async def count_new_scores(conn: AsyncConnection, since_id: int) -> int:
     return int(
         await conn.scalar(

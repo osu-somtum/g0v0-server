@@ -40,7 +40,31 @@ from fastapi import (
 )
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from httpx import HTTPError
-from sqlmodel import select
+from sqlmodel import col, or_, select
+
+# Somtum-uploaded beatmapsets use ids at/above this floor (bancho
+# BEATMAP_UPLOAD_SET_ID_FLOOR) — they don't exist on osu!, so osu!'s search API
+# never returns them. We surface these from the local DB and merge them in.
+SOMTUM_SET_ID_FLOOR = 100_000_000
+
+
+async def _search_local_custom(session, query: SearchQueryModel) -> list:
+    """Local search over somtum custom beatmapsets (osu! API can't return them)."""
+    stmt = select(Beatmapset).where(col(Beatmapset.id) >= SOMTUM_SET_ID_FLOOR)
+    q = (query.q or "").strip()
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                col(Beatmapset.title).ilike(like),
+                col(Beatmapset.artist).ilike(like),
+                col(Beatmapset.creator).ilike(like),
+            ),
+        )
+    stmt = stmt.order_by(col(Beatmapset.id).desc()).limit(50)
+    sets = (await session.exec(stmt)).all()
+    includes = [*Beatmapset.BEATMAPSET_TRANSFORMER_INCLUDES, "beatmaps", "beatmaps.max_combo", "pack_tags"]
+    return [await BeatmapsetModel.transform(bs, session=session, includes=includes) for bs in sets]
 
 
 @router.get(
@@ -58,6 +82,7 @@ async def search_beatmapset(
     fetcher: Fetcher,
     redis: Redis,
     cache_service: BeatmapsetCacheService,
+    session: Database,
 ):
     """Search for beatmapsets.
 
@@ -120,20 +145,30 @@ async def search_beatmapset(
     query_hash = generate_hash(query.model_dump())
     cursor_hash = generate_hash(cursor)
 
-    # Try to get search results from cache
+    # Remote (osu! API) results — from cache or fetched. Tolerate fetch failure so
+    # local custom maps still show even if the osu! API is unavailable.
     cached_result = await cache_service.get_search_from_cache(query_hash, cursor_hash)
     if cached_result:
-        sets = SearchBeatmapsetsResp(**cached_result)
-        return sets
+        remote = SearchBeatmapsetsResp(**cached_result)
+    else:
+        try:
+            remote = await fetcher.search_beatmapset(query, cursor, redis)
+            await cache_service.cache_search_result(query_hash, cursor_hash, remote.model_dump())
+        except HTTPError:
+            remote = SearchBeatmapsetsResp(total=0, beatmapsets=[])
 
-    try:
-        sets = await fetcher.search_beatmapset(query, cursor, redis)
-
-        # Cache search results
-        await cache_service.cache_search_result(query_hash, cursor_hash, sets.model_dump())
-        return sets
-    except HTTPError as e:
-        raise RequestError(ErrorType.INTERNAL, {"message": str(e)}) from e
+    # Somtum custom maps (only on the first page; they're not in the osu! API).
+    local = [] if cursor else await _search_local_custom(session, query)
+    if not local:
+        return remote
+    seen = {ls.get("id") for ls in local}
+    merged = local + [b for b in remote.beatmapsets if b.get("id") not in seen]
+    return SearchBeatmapsetsResp(
+        total=remote.total + len(local),
+        beatmapsets=merged,
+        cursor=remote.cursor,
+        cursor_string=remote.cursor_string,
+    )
 
 
 @router.get(

@@ -40,6 +40,38 @@ services:
     networks:
       - banchopy_default
 
+  # osu-server-spectator: serves the SignalR hubs (metadata=presence/online,
+  # spectator, multiplayer) that the g0v0 FastAPI app does NOT. Shares the same
+  # MySQL (`lazer`) + Redis; calls back into g0v0 over interop. Reachable on the
+  # host at 8060 so Caddy can route `/signalr/*` here (everything else -> g0v0:8000).
+  spectator:
+    image: ghcr.io/googuteam/osu-server-spectator:v2
+    container_name: somtum-spectator
+    env_file:
+      - .env
+    environment:
+      - SERVER_PORT=80
+      - REDIS_HOST=redis
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - SHARED_INTEROP_DOMAIN=http://somtum-g0v0:8000
+      # spectator hard-requires a syntactically-valid Sentry DSN; this one points
+      # nowhere (send failures are swallowed) so we don't ship telemetry anywhere.
+      - SENTRY_DSN=https://0123456789abcdef0123456789abcdef@localhost/1
+      # SHARED_INTEROP_SECRET + MYSQL_USER/PASSWORD/DATABASE come from .env
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    ports:
+      - "0.0.0.0:8060:80"
+    volumes:
+      - ./rulesets:/data/rulesets
+    depends_on:
+      - g0v0
+    restart: unless-stopped
+    networks:
+      - banchopy_default
+
 networks:
   banchopy_default:
     external: true

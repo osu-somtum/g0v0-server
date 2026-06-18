@@ -15,7 +15,7 @@ from app.dependencies.database import engine, get_redis
 from app.log import log
 from app.models.score import GameMode, HitResult
 
-from .bancho_db import fetch_map_by_md5, fetch_new_scores, get_bancho_engine
+from .bancho_db import fetch_custom_maps, fetch_map_by_md5, fetch_new_scores, get_bancho_engine
 from .mappings import grade_to_rank, int_mods_to_apimods, map_status_to_g0v0, osu_covers
 
 from sqlalchemy import text
@@ -66,6 +66,14 @@ async def _ensure_beatmap(
         cache[md5] = beatmap_id
         return beatmap_id
 
+    await _create_beatmap(session, m)
+    cache[md5] = beatmap_id
+    return beatmap_id
+
+
+async def _create_beatmap(session: AsyncSession, m: Mapping[str, Any]) -> None:
+    """Create g0v0 beatmap (+ its set if missing) from a bancho `maps` row. Flushes."""
+    beatmap_id = int(m["id"])
     set_id = int(m["set_id"])
     owner = int(m["owner_id"]) if m["owner_id"] is not None else 0
     is_osu = m["server"] == "osu!"
@@ -99,7 +107,7 @@ async def _ensure_beatmap(
             user_id=owner,
             version=m["version"],
             url=f"https://osu.ppy.sh/beatmaps/{beatmap_id}",
-            checksum=md5,
+            checksum=m["md5"],
             last_updated=m["last_update"],
             beatmap_status=map_status_to_g0v0(int(m["status"])),
             difficulty_rating=float(m["diff"]),
@@ -112,8 +120,18 @@ async def _ensure_beatmap(
         ),
     )
     await session.flush()
-    cache[md5] = beatmap_id
-    return beatmap_id
+
+
+async def import_custom_beatmaps(session: AsyncSession, conn: AsyncConnection) -> int:
+    """Bridge ALL somtum custom (server='private') maps into g0v0 so they're
+    browseable/searchable in lazer (osu!'s API has no record of them). Idempotent."""
+    created = 0
+    rows = await fetch_custom_maps(conn)
+    for m in rows:
+        if await session.get(Beatmap, int(m["id"])) is None:
+            await _create_beatmap(session, m)
+            created += 1
+    return created
 
 
 async def _import_one(
@@ -257,6 +275,14 @@ async def _run(dry_run: bool, from_zero: bool) -> dict[str, int]:
                 # dry-run pages via the advanced cursor without persisting.
                 if not dry_run:
                     await session.commit()
+
+            # Bridge all custom (somtum) maps so they're browseable in lazer,
+            # independent of whether anyone has scores on them.
+            if not dry_run:
+                custom = await import_custom_beatmaps(session, conn)
+                await session.commit()
+                if custom:
+                    logger.info("Bridged {n} custom beatmaps into lazer.", n=custom)
 
             logger.info(
                 "Stable import {mode} | from_id={start} created={created} skipped_no_map={skipped}",
