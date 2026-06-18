@@ -30,7 +30,7 @@ from .team import Team, TeamMember
 from .user_account_history import UserAccountHistory, UserAccountHistoryResp, UserAccountHistoryType
 from .user_preference import DEFAULT_ORDER, UserPreference
 
-from pydantic import field_validator
+from pydantic import field_serializer, field_validator
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import Mapped
 from sqlmodel import (
@@ -348,6 +348,30 @@ class UserModel(DatabaseModel[UserDict]):
                 return GameMode.OSU
         return v
 
+    @field_serializer("page", when_used="always")
+    def _render_page_html(self, value, _info):
+        """Render `page.html` from `page.raw` (BBCode) for bridged accounts.
+
+        Somtum: accounts mirrored from bancho.py carry only the raw BBCode
+        (`html=''`) — see the users->lazer_users sync trigger. Render it here via
+        g0v0's own bbcode_service so the profile "About Me" displays, identically
+        to native lazer userpages. Native pages already store `html` and pass
+        through unchanged; `raw` is always preserved. Defensive: bbcode_service
+        raises on empty content, so guard and fall back to the stored value.
+        """
+        if not isinstance(value, dict):
+            return value
+        html = value.get("html") or ""
+        raw = value.get("raw") or ""
+        if html or not raw.strip():
+            return value
+        try:
+            from app.service.bbcode_service import bbcode_service
+
+            return bbcode_service.process_userpage_content(raw)
+        except Exception:
+            return value
+
     @ondemand
     @staticmethod
     async def groups(_session: AsyncSession, _obj: "User") -> list[str]:
@@ -567,7 +591,13 @@ class UserModel(DatabaseModel[UserDict]):
     @staticmethod
     async def daily_challenge_user_stats(_session: AsyncSession, obj: "User") -> DailyChallengeStatsResp | None:
         stats = await obj.awaitable_attrs.daily_challenge_stats
-        return DailyChallengeStatsResp.from_db(stats) if stats else None
+        if stats:
+            return DailyChallengeStatsResp.from_db(stats)
+        # Somtum: bridged users have never played a daily challenge, so there is no
+        # daily_challenge_stats row. Return a zeroed object (not None) — the osu!lazer
+        # client's DailyChallengeStatsDisplay binds to a non-null instance, and an
+        # explicit JSON null overwrites that default and NREs on profile open.
+        return DailyChallengeStatsResp(user_id=obj.id)
 
     @ondemand
     @staticmethod

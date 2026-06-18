@@ -64,6 +64,16 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         return f"mysql+aiomysql://{self.mysql_user}:{self.mysql_password}@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
 
+    # Somtum dual-bancho: import osu!stable (bancho.py) scores into lazer. The
+    # bancho DB lives on the SAME MySQL server (shared host/user) in its own schema.
+    enable_stable_score_import: Annotated[bool, Field(default=False), "stable_import"]
+    stable_import_interval_seconds: Annotated[int, Field(default=300), "stable_import"]
+    bancho_database: Annotated[str, Field(default="freedomdive_db"), "stable_import"]
+
+    @property
+    def bancho_database_url(self) -> str:
+        return f"mysql+aiomysql://{self.mysql_user}:{self.mysql_password}@{self.mysql_host}:{self.mysql_port}/{self.bancho_database}"
+
     # jwt
     secret_key: Annotated[str, Field(default="your_jwt_secret_here", alias="jwt_secret_key"), "jwt"]
     algorithm: Annotated[str, Field(default="HS256", alias="jwt_algorithm"), "jwt"]

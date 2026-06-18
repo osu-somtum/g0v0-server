@@ -21,6 +21,14 @@ services:
     container_name: somtum-g0v0
     env_file:
       - .env
+    # Podman's in-network resolver (aardvark, ~10.89.x.1) resolves sibling
+    # containers (mysql/redis) but wasn't forwarding external lookups, so the
+    # osu! API fetcher failed with "Name or service not known". Point the
+    # upstream forwarder at Cloudflare so osu.ppy.sh etc. resolve; container-name
+    # resolution still works via aardvark.
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
     ports:
       - "0.0.0.0:8000:8000"
     volumes:

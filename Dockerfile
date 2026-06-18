@@ -27,6 +27,7 @@ COPY tools/ ./tools/
 COPY migrations/ ./migrations/
 COPY static/ ./static/
 COPY app/ ./app/
+COPY scripts/ ./scripts/
 COPY main.py ./
 COPY install-all-deps.py ./
 

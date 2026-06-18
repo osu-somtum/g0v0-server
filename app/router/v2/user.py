@@ -38,6 +38,7 @@ from app.service.user_cache_service import get_user_cache_service
 from .router import router
 
 from fastapi import BackgroundTasks, Path, Query, Request, Security
+from sqlalchemy import func
 from sqlmodel import exists, select, tuple_
 from sqlmodel.sql.expression import col
 
@@ -72,6 +73,44 @@ async def visible_to_current_user(user: User, current_user: User | None, session
     if current_user and current_user.id == user.id:
         return True
     return not await user.is_restricted(session)
+
+
+@router.get("/search", include_in_schema=False)
+@router.get("/search/", include_in_schema=False)
+async def search(
+    session: Database,
+    mode: Annotated[str, Query()] = "all",
+    query: Annotated[str, Query()] = "",
+    page: Annotated[int, Query()] = 1,
+):
+    """osu! global search. Somtum: implements **user** search (the lazer client's
+    player search hits `/api/v2/search?mode=user`); other categories return empty
+    so the client doesn't 404. Matches osu-web's `{"user": {"data": [...], "total": N}}`.
+    """
+    result: dict = {}
+    q = (query or "").strip()
+    if mode in ("user", "all"):
+        data: list = []
+        total = 0
+        if q:
+            page = max(page, 1)
+            per = 20
+            where = (
+                col(User.username).ilike(f"%{q}%"),
+                ~User.is_restricted_query(col(User.id)),
+                User.id != BANCHOBOT_ID,
+            )
+            users = (
+                await session.exec(
+                    select(User).where(*where).order_by(col(User.id)).limit(per).offset((page - 1) * per),
+                )
+            ).all()
+            total = int(await session.scalar(select(func.count()).select_from(User).where(*where)) or 0)
+            data = [await UserModel.transform(u, includes=User.CARD_INCLUDES) for u in users]
+        result["user"] = {"data": data, "total": total}
+    if mode == "all":
+        result["wiki_page"] = {"data": [], "total": 0}
+    return result
 
 
 @router.get(
