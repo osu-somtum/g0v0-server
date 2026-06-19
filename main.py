@@ -214,6 +214,10 @@ app.include_router(auth_router)
 app.include_router(private_router)
 app.include_router(lio_router)
 
+from app.router.somtum_assets import somtum_router  # noqa: E402
+
+app.include_router(somtum_router)
+
 # 会话验证中间件
 if settings.enable_session_verification:
     app.add_middleware(VerifySessionMiddleware)
@@ -297,10 +301,13 @@ async def health_check():
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):  # noqa: ARG001
+    # `default=str` so non-JSON-serializable values in the error context (e.g. the
+    # raw request `body` bytes when a form is sent to a JSON endpoint) can't make
+    # the handler itself raise -> turning a recoverable 422 into a 500.
     return JSONResponse(
         status_code=422,
         content={
-            "error": json.dumps(exc.errors()),
+            "error": json.dumps(exc.errors(), default=str),
         },
     )
 

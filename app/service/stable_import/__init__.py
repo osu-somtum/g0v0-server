@@ -22,6 +22,30 @@ See DUAL_BANCHO_PLAN.md and the `dual-bancho-lazer` skill.
 
 from __future__ import annotations
 
-from .importer import backfill, sync_new
+from .importer import (
+    backfill,
+    rebuild_replays,
+    recompute_scores,
+    refresh_custom_covers,
+    refresh_custom_owners,
+    refresh_custom_previews,
+    refresh_user_banners,
+    sync_new,
+    sync_rank_history,
+    sync_rx_stats,
+    sync_teams,
+)
 
-__all__ = ["backfill", "sync_new"]
+__all__ = [
+    "backfill",
+    "rebuild_replays",
+    "recompute_scores",
+    "refresh_custom_covers",
+    "refresh_custom_owners",
+    "refresh_custom_previews",
+    "refresh_user_banners",
+    "sync_new",
+    "sync_rank_history",
+    "sync_rx_stats",
+    "sync_teams",
+]

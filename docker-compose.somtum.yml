@@ -39,6 +39,22 @@ services:
       # bancho's stable replays (read-only) so the importer can bridge .osr files
       # into g0v0 storage → leaderboard replays are watchable. See app/service/stable_import.
       - ../bancho.py/.data/osr:/bancho-osr:ro
+      # bancho's custom-map zips + backgrounds (read-only): lazer downloads/covers
+      # for somtum (id>=1e8) maps that osu!'s CDN/mirrors don't have. See somtum_assets.
+      - ../bancho.py/.data/osz:/bancho-osz:ro
+      - ../bancho.py/.data/bg:/bancho-bg:ro
+      # bancho's per-set audio previews (.data/audio/{set_id}.mp3|ogg): somtum
+      # (id>=1e8) sets aren't on b.ppy.sh's preview CDN, so lazer's in-client song
+      # preview is served from here. See somtum_assets /somtum/preview.
+      - ../bancho.py/.data/audio:/bancho-audio:ro
+      # cached .osu files — used to synthesize relax taps into converted RX replays.
+      - ../bancho.py/.data/osu:/bancho-osu:ro
+      # clan avatar/banner assets (the website's asset root) — bridged as g0v0
+      # team flag/cover images. Holds avatar/, avatars/, banners/ + default.jpg.
+      - /var/www/assets/clans:/bancho-clan-assets:ro
+      # the website's user-banner asset root (banners/{id}.ext) — bridged into
+      # each user's lazer profile `cover`. See somtum_assets /somtum/user/banner.
+      - /var/www/assets/banners:/bancho-user-banners:ro
     restart: unless-stopped
     networks:
       - banchopy_default
@@ -48,7 +64,11 @@ services:
   # MySQL (`lazer`) + Redis; calls back into g0v0 over interop. Reachable on the
   # host at 8060 so Caddy can route `/signalr/*` here (everything else -> g0v0:8000).
   spectator:
-    image: ghcr.io/googuteam/osu-server-spectator:v2
+    # Patched upstream image: fixes the friend-presence query
+    # (relationship.type 'Friend'->'FOLLOW' + u.priv=1 -> u.priv&1=1 for
+    # bancho-bridged privilege bitmasks). Build: see spectator-patch/.
+    #   podman build -t g0v0-spectator-somtum:relfix ./spectator-patch
+    image: localhost/g0v0-spectator-somtum:relfix
     container_name: somtum-spectator
     env_file:
       - .env

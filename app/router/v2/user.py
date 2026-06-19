@@ -6,7 +6,7 @@ beatmapsets, scores, and other user-related data.
 
 from datetime import datetime, timedelta
 import sys
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from app.config import settings
 from app.const import BANCHOBOT_ID, NEW_SCORE_FORMAT_VER
@@ -14,6 +14,7 @@ from app.database import (
     Beatmap,
     BeatmapModel,
     BeatmapPlaycounts,
+    Beatmapset,
     BeatmapsetModel,
     FavouriteBeatmapset,
     User,
@@ -30,6 +31,7 @@ from app.dependencies.user import get_current_user, get_optional_user
 from app.helpers import api_doc, asset_proxy_response, utcnow
 from app.log import log
 from app.models.error import ErrorType, RequestError
+from app.models.beatmap import BeatmapRankStatus
 from app.models.mods import API_MODS
 from app.models.score import GameMode
 from app.models.user import BeatmapsetType
@@ -564,6 +566,24 @@ async def get_user_info(
 
 beatmapset_includes = [*BeatmapsetModel.BEATMAPSET_TRANSFORMER_INCLUDES, "beatmaps"]
 
+# Profile beatmapset tabs (ranked/loved/pending/graveyard) -> the stored
+# `beatmap_status` values that belong in each, plus the column to order by.
+# RANKED folds in APPROVED; PENDING folds in WIP + QUALIFIED (osu-web groups
+# unranked-but-submitted maps under "Pending"). Ordering mirrors osu-web:
+# ranked/loved newest-ranked first, pending/graveyard most-recently-updated first.
+_BEATMAPSET_STATUS_GROUPS: dict[BeatmapsetType, tuple[list[BeatmapRankStatus], Any]] = {
+    BeatmapsetType.RANKED: (
+        [BeatmapRankStatus.RANKED, BeatmapRankStatus.APPROVED],
+        Beatmapset.ranked_date,
+    ),
+    BeatmapsetType.LOVED: ([BeatmapRankStatus.LOVED], Beatmapset.ranked_date),
+    BeatmapsetType.PENDING: (
+        [BeatmapRankStatus.PENDING, BeatmapRankStatus.WIP, BeatmapRankStatus.QUALIFIED],
+        Beatmapset.last_updated,
+    ),
+    BeatmapsetType.GRAVEYARD: ([BeatmapRankStatus.GRAVEYARD], Beatmapset.last_updated),
+}
+
 
 @router.get(
     "/users/{user_id}/beatmapsets/{type}",
@@ -616,16 +636,35 @@ async def get_user_beatmapsets(
     if not user or user.id == BANCHOBOT_ID or not await visible_to_current_user(user, current_user, session):
         raise RequestError(ErrorType.USER_NOT_FOUND)
 
-    if type in {
-        BeatmapsetType.GRAVEYARD,
-        BeatmapsetType.GUEST,
-        BeatmapsetType.LOVED,
-        BeatmapsetType.NOMINATED,
-        BeatmapsetType.PENDING,
-        BeatmapsetType.RANKED,
-    }:
-        # TODO: mapping, modding
+    if type in {BeatmapsetType.GUEST, BeatmapsetType.NOMINATED}:
+        # Somtum doesn't track guest-difficulty ownership or BN nominations
+        # separately from the set uploader, so these tabs stay empty.
         resp = []
+
+    elif type in _BEATMAPSET_STATUS_GROUPS:
+        # Maps the user uploaded, grouped by rank status. `Beatmapset.user_id` is
+        # the uploader (bridged from bancho `mapsets.uploaded_by`); `beatmap_status`
+        # is the stored status (not the leaderboard-display status, so categories
+        # stay correct even with enable_all_beatmap_leaderboard).
+        statuses, order_col = _BEATMAPSET_STATUS_GROUPS[type]
+        beatmapsets = (
+            await session.exec(
+                select(Beatmapset)
+                .where(
+                    Beatmapset.user_id == user_id,
+                    col(Beatmapset.beatmap_status).in_(statuses),
+                )
+                .order_by(col(order_col).desc(), col(Beatmapset.id).desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        ).all()
+        resp = [
+            await BeatmapsetModel.transform(
+                beatmapset, session=session, user=user, includes=beatmapset_includes
+            )
+            for beatmapset in beatmapsets
+        ]
 
     elif type == BeatmapsetType.FAVOURITE:
         if offset == 0:

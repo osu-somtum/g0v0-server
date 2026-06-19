@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal, NotRequired, TypedDict, ove
 
 from app.config import settings
 from app.helpers import utcnow
+from app.models.beatmap import BeatmapRankStatus
 from app.models.notification import NotificationName
 from app.models.score import GameMode
 from app.models.user import Country, Page
@@ -173,6 +174,26 @@ class UserDict(TypedDict):
     default_group: NotRequired[str]
     session_verified: NotRequired[bool]
     session_verification_method: NotRequired[Literal["totp", "mail"] | None]
+
+
+async def _count_uploaded_beatmapsets(
+    session: AsyncSession, obj: "User", statuses: list
+) -> int:
+    """Count beatmapsets the user uploaded whose stored `beatmap_status` is in
+    `statuses`. `Beatmapset.user_id` is the uploader (bridged from bancho
+    `mapsets.uploaded_by`). Lazily imports to avoid a circular import."""
+    from .beatmapset import Beatmapset
+
+    return (
+        await session.exec(
+            select(func.count())
+            .select_from(Beatmapset)
+            .where(
+                Beatmapset.user_id == obj.id,
+                col(Beatmapset.beatmap_status).in_(statuses),
+            )
+        )
+    ).one()
 
 
 class UserModel(DatabaseModel[UserDict]):
@@ -384,13 +405,13 @@ class UserModel(DatabaseModel[UserDict]):
 
     @ondemand
     @staticmethod
-    async def graveyard_beatmapset_count(_session: AsyncSession, _obj: "User") -> int:
-        return 0
+    async def graveyard_beatmapset_count(session: AsyncSession, obj: "User") -> int:
+        return await _count_uploaded_beatmapsets(session, obj, [BeatmapRankStatus.GRAVEYARD])
 
     @ondemand
     @staticmethod
-    async def loved_beatmapset_count(_session: AsyncSession, _obj: "User") -> int:
-        return 0
+    async def loved_beatmapset_count(session: AsyncSession, obj: "User") -> int:
+        return await _count_uploaded_beatmapsets(session, obj, [BeatmapRankStatus.LOVED])
 
     @ondemand
     @staticmethod
@@ -409,13 +430,19 @@ class UserModel(DatabaseModel[UserDict]):
 
     @ondemand
     @staticmethod
-    async def pending_beatmapset_count(_session: AsyncSession, _obj: "User") -> int:
-        return 0
+    async def pending_beatmapset_count(session: AsyncSession, obj: "User") -> int:
+        return await _count_uploaded_beatmapsets(
+            session,
+            obj,
+            [BeatmapRankStatus.PENDING, BeatmapRankStatus.WIP, BeatmapRankStatus.QUALIFIED],
+        )
 
     @ondemand
     @staticmethod
-    async def ranked_beatmapset_count(_session: AsyncSession, _obj: "User") -> int:
-        return 0
+    async def ranked_beatmapset_count(session: AsyncSession, obj: "User") -> int:
+        return await _count_uploaded_beatmapsets(
+            session, obj, [BeatmapRankStatus.RANKED, BeatmapRankStatus.APPROVED]
+        )
 
     @ondemand
     @staticmethod

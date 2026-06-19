@@ -74,6 +74,25 @@ class Settings(BaseSettings):
     # leaderboard scores are watchable. Local-storage assumption.
     bancho_osr_dir: Annotated[str, Field(default="/bancho-osr"), "stable_import"]
     stable_replay_dir: Annotated[str, Field(default="/app/storage/replays"), "stable_import"]
+    # bancho's custom-map assets, mounted read-only: full beatmap zips (.osz) and
+    # background images, so somtum (id >= 1e8) maps that osu!'s CDN/mirrors don't
+    # have are still downloadable + get cover thumbnails in lazer.
+    bancho_osz_dir: Annotated[str, Field(default="/bancho-osz"), "stable_import"]
+    bancho_bg_dir: Annotated[str, Field(default="/bancho-bg"), "stable_import"]
+    # bancho's per-set audio previews (.data/audio/{set_id}.mp3|ogg), mounted
+    # read-only — somtum (id >= 1e8) sets don't exist on osu!'s b.ppy.sh preview
+    # CDN, so lazer's in-client song preview is served from here instead.
+    bancho_audio_dir: Annotated[str, Field(default="/bancho-audio"), "stable_import"]
+    # the website's user-banner asset root (/var/www/assets/banners/{id}.ext),
+    # mounted read-only — bridged into each user's lazer profile `cover`.
+    bancho_user_banner_dir: Annotated[str, Field(default="/bancho-user-banners"), "stable_import"]
+    # bancho's cached .osu beatmap files, mounted read-only — needed to synthesize
+    # relax key-presses into converted RX replays (stable relax replays store cursor
+    # movement but no taps, so lazer would otherwise show all-misses).
+    bancho_osu_dir: Annotated[str, Field(default="/bancho-osu"), "stable_import"]
+    # bancho's clan avatar/banner assets (avatar/{id}.ext, banners/{id}.ext),
+    # mounted read-only — bridged as g0v0 team flag/cover images.
+    bancho_clan_assets_dir: Annotated[str, Field(default="/bancho-clan-assets"), "stable_import"]
 
     @property
     def bancho_database_url(self) -> str:

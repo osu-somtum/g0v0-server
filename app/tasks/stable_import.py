@@ -25,9 +25,46 @@ if settings.enable_stable_score_import:
         next_run_time=datetime.now() + timedelta(seconds=30),
     )
     async def stable_score_import_job() -> None:
-        from app.service.stable_import import sync_new
+        from app.service.stable_import import (
+            refresh_custom_covers,
+            refresh_custom_owners,
+            refresh_custom_previews,
+            refresh_user_banners,
+            sync_new,
+            sync_rank_history,
+            sync_rx_stats,
+            sync_teams,
+        )
 
         try:
             await sync_new()
         except Exception:
             logger.exception("Stable score sync failed")
+        try:
+            await sync_rank_history()
+        except Exception:
+            logger.exception("Stable rank-history sync failed")
+        try:
+            await sync_rx_stats()
+        except Exception:
+            logger.exception("Stable RX/AP stats sync failed")
+        try:
+            await refresh_custom_covers()
+        except Exception:
+            logger.exception("Stable custom-cover refresh failed")
+        try:
+            await refresh_custom_previews()
+        except Exception:
+            logger.exception("Stable custom-preview refresh failed")
+        try:
+            await refresh_user_banners()
+        except Exception:
+            logger.exception("Stable user-banner refresh failed")
+        try:
+            await refresh_custom_owners()
+        except Exception:
+            logger.exception("Stable custom-owner refresh failed")
+        try:
+            await sync_teams()
+        except Exception:
+            logger.exception("Stable teams sync failed")

@@ -196,7 +196,9 @@ async def register_user(
             country_code = "CN"
 
         # Create new user
-        # Ensure AUTO_INCREMENT starts from 3 (ID=2 is BanchoBot)
+        # Ensure AUTO_INCREMENT never collides with the server bot (ID=1, shared
+        # with bancho.py). Real Somtum users originate in bancho.py and already
+        # start far higher; this is only a floor for a fresh/empty table.
         result = await db.execute(
             text(
                 "SELECT AUTO_INCREMENT FROM information_schema.TABLES "
@@ -204,8 +206,8 @@ async def register_user(
             )
         )
         next_id = result.one()[0]
-        if next_id <= 2:
-            await db.execute(text("ALTER TABLE lazer_users AUTO_INCREMENT = 3"))
+        if next_id <= 1:
+            await db.execute(text("ALTER TABLE lazer_users AUTO_INCREMENT = 2"))
             await db.commit()
 
         new_user = User(
@@ -635,7 +637,12 @@ async def oauth_token(
 
         # Generate tokens
         access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
-        access_token = create_access_token(data={"sub": "3"}, expires_delta=access_token_expires)
+        # The client_credentials grant authenticates as the server bot; the JWT
+        # subject MUST match the user_id the token is stored under (BANCHOBOT_ID),
+        # otherwise the token resolves to the wrong (or a nonexistent) user.
+        access_token = create_access_token(
+            data={"sub": str(BANCHOBOT_ID)}, expires_delta=access_token_expires
+        )
         refresh_token_str = generate_refresh_token()
 
         # Store token

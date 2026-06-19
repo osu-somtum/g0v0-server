@@ -19,6 +19,13 @@ async def create_banchobot() -> None:
 
     BanchoBot is a special bot user used for system messages,
     daily challenges, and other automated interactions.
+
+    In the unified Somtum deploy bancho.py owns BanchoBot (id 1) and seeds the
+    `lazer_users` row via its sync triggers, so this is a no-op there. It stays
+    as a safety net for g0v0-standalone deploys, or when g0v0 boots before
+    bancho.py has installed its triggers. The `if not is_exist` guard keeps it
+    idempotent either way; bancho.py remains source of truth and refreshes the
+    row (identity, email, flags) on its next `users` write.
     """
     async with with_db() as session:
         is_exist = (await session.exec(select(exists()).where(User.id == BANCHOBOT_ID))).first()
@@ -29,7 +36,7 @@ async def create_banchobot() -> None:
                 is_bot=True,
                 pw_bcrypt="0",
                 id=BANCHOBOT_ID,
-                avatar_url="https://a.ppy.sh/3",
+                avatar_url=f"https://a.ppy.sh/{BANCHOBOT_ID}",
                 country_code="SH",
                 website="https://twitter.com/banchoboat",
             )

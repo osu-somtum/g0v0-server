@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+from app.const import MAX_SCORE
 from app.models.beatmap import BeatmapRankStatus
 from app.models.mods.definition import APIMod
-from app.models.score import Rank
+from app.models.score import GameMode, Rank
+
+# bancho.py gamemode int -> g0v0 GameMode. bancho numbers relax/autopilot as
+# 4=rx!std, 5=rx!taiko, 6=rx!catch, 8=ap!std (g0v0's own from_int_extra uses a
+# DIFFERENT numbering, so it can't be reused for bancho modes). Returns None for
+# ids bancho never produces (e.g. 7).
+_BANCHO_MODE_TO_GAMEMODE: dict[int, GameMode] = {
+    0: GameMode.OSU,
+    1: GameMode.TAIKO,
+    2: GameMode.FRUITS,
+    3: GameMode.MANIA,
+    4: GameMode.OSURX,
+    5: GameMode.TAIKORX,
+    6: GameMode.FRUITSRX,
+    8: GameMode.OSUAP,
+}
+
+
+def bancho_mode_to_gamemode(mode: int) -> GameMode | None:
+    return _BANCHO_MODE_TO_GAMEMODE.get(mode)
 
 # bancho `Mods` IntFlag bit -> osu! mod acronym (see bancho.py app/constants/mods.py).
 # We cannot import bancho's enum from g0v0, so the bits are mirrored here. Stable
@@ -80,6 +100,31 @@ def grade_to_rank(grade: str) -> Rank:
     return _GRADE_TO_RANK.get((grade or "").upper(), Rank.D)
 
 
+def standardised_total_score(mode: int, accuracy: float, max_combo: int, beatmap_max_combo: int) -> int:
+    """Approximate osu!lazer's standardised (0..~1,000,000) total score from a
+    stable (ScoreV1) play.
+
+    Uses osu!'s real per-ruleset accuracy/combo split from
+    `StandardisedScoreMigrationTools.convertFromLegacyTotalScore` (the accuracy
+    portions are attribute-free), but with an attribute-free combo proportion
+    (`achieved_combo / beatmap_max_combo`) because we don't run a per-beatmap
+    ScoreV1 simulator to derive the exact max combo/accuracy/bonus scores. Bonus
+    (spinner) score is omitted. This is g0v0's display score; lazer derives both
+    its standardised and classic in-game numbers from it.
+    """
+    acc = min(max(accuracy, 0.0), 1.0)
+    cp = min(max_combo / beatmap_max_combo, 1.0) if beatmap_max_combo > 0 else acc
+    if mode == 1:  # taiko
+        score = 250000 * cp + 750000 * acc**3.6
+    elif mode == 2:  # catch (combo-dominated; tiny-droplet split omitted)
+        score = MAX_SCORE * cp
+    elif mode == 3:  # mania
+        score = 850000 * cp + 150000 * acc ** (2 + 2 * acc)
+    else:  # osu! (0) and any relax/autopilot variants that map to ruleset 0
+        score = 500000 * cp * acc + 500000 * acc**5
+    return round(min(score, MAX_SCORE))
+
+
 # bancho RankedStatus int (app/objects/beatmap.py) -> g0v0 BeatmapRankStatus.
 # bancho: NotSubmitted=-1, Pending=0, UpdateAvailable=1, Ranked=2, Approved=3,
 # Qualified=4, Loved=5.  g0v0: GRAVEYARD=-2, WIP=-1, PENDING=0, RANKED=1,
@@ -107,6 +152,31 @@ def empty_covers() -> dict[str, str]:
     NOT nullable — a null `covers` breaks deserialization of the whole beatmap
     listing, so custom sets must carry an (empty) covers object, not None."""
     return {k: "" for k in _COVER_KEYS}
+
+
+def custom_covers(set_id: int, base_url: str) -> dict[str, str]:
+    """Covers for a somtum custom set, served from this server's `/somtum/bg`
+    route (bancho stored the background locally; osu!'s CDN has nothing). Full
+    image for big covers, thumbnail for card/list."""
+    base = base_url.rstrip("/")
+    full = f"{base}/somtum/bg/{set_id}"
+    thumb = f"{full}/thumb"
+    return {
+        "cover": full,
+        "cover@2x": full,
+        "card": thumb,
+        "card@2x": thumb,
+        "list": thumb,
+        "list@2x": thumb,
+        "slimcover": full,
+        "slimcover@2x": full,
+    }
+
+
+def custom_preview_url(set_id: int, base_url: str) -> str:
+    """Audio-preview URL for a somtum custom set, served from this server's
+    `/somtum/preview` route (osu!'s b.ppy.sh preview CDN has nothing for it)."""
+    return f"{base_url.rstrip('/')}/somtum/preview/{set_id}"
 
 
 def osu_covers(set_id: int) -> dict[str, str]:

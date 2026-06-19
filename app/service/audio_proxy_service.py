@@ -10,6 +10,10 @@ from app.models.error import ErrorType, RequestError
 import httpx
 import redis.asyncio as redis
 
+# somtum-uploaded beatmapsets use ids at/above this floor; their preview audio is
+# served from bancho's local .data/audio dir (osu!'s b.ppy.sh CDN has nothing).
+SOMTUM_SET_ID_FLOOR = 100_000_000
+
 
 class AudioProxyService:
     """Audio proxy service for fetching and caching beatmapset audio previews.
@@ -99,6 +103,14 @@ class AudioProxyService:
         Raises:
             RequestError: If the audio cannot be fetched.
         """
+        # Somtum custom sets (id >= 1e8) don't exist on osu!'s b.ppy.sh preview
+        # CDN — bancho stored the preview locally. Serve it from the mounted
+        # audio dir so the SAME endpoint covers both real and somtum maps (the
+        # client fork then needs only ONE rewrite: b.ppy.sh/preview/{id}.mp3 ->
+        # {server}/api/private/audio/beatmapset/{id}).
+        if beatmapset_id >= SOMTUM_SET_ID_FLOOR:
+            return self._read_local_somtum_audio(beatmapset_id)
+
         try:
             # Build osu! official preview audio URL
             preview_url = f"https://b.ppy.sh/preview/{beatmapset_id}.mp3"
@@ -144,11 +156,31 @@ class AudioProxyService:
             logger.error(f"Unexpected error fetching beatmapset audio for ID {beatmapset_id}: {e}")
             raise RequestError(ErrorType.INTERNAL_ERROR_FETCHING_AUDIO) from e
 
+    def _read_local_somtum_audio(self, beatmapset_id: int) -> tuple[bytes, str] | None:
+        """Read a somtum (id >= 1e8) set's preview from bancho's local audio dir.
+
+        osu!'s b.ppy.sh preview CDN has nothing for somtum-uploaded sets, so their
+        preview audio is served from bancho's `.data/audio/{id}.mp3|ogg` (mounted
+        read-only at `settings.bancho_audio_dir`). Returns None if not a somtum id
+        or no file on disk (caller then falls back to the b.ppy.sh proxy).
+        """
+        from pathlib import Path
+
+        from app.config import settings
+
+        if beatmapset_id < SOMTUM_SET_ID_FLOOR:
+            return None
+        for ext, mime in (("mp3", "audio/mpeg"), ("ogg", "audio/ogg")):
+            p = Path(settings.bancho_audio_dir) / f"{beatmapset_id}.{ext}"
+            if p.is_file():
+                return p.read_bytes(), mime
+        return None
+
     async def get_beatmapset_audio(self, beatmapset_id: int) -> tuple[bytes, str]:
         """Get audio preview by beatmapset ID.
 
-        Attempts to retrieve from cache first, then fetches from osu! servers
-        if not cached.
+        For somtum (id >= 1e8) sets, serves bancho's local preview file (osu!'s CDN
+        has none). Otherwise tries the Redis cache, then proxies from b.ppy.sh.
 
         Args:
             beatmapset_id: The beatmapset ID.
@@ -156,6 +188,11 @@ class AudioProxyService:
         Returns:
             Tuple of (audio_data, content_type).
         """
+        # somtum custom sets: served from local disk, never on b.ppy.sh.
+        local = self._read_local_somtum_audio(beatmapset_id)
+        if local is not None:
+            return local
+
         # Try to get from cache first
         cached_result = await self.get_beatmapset_audio_from_cache(beatmapset_id)
         if cached_result:

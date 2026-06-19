@@ -334,6 +334,21 @@ async def download_beatmapset(
     Returns:
         RedirectResponse | str: Redirect to the download URL or the download url text.
     """
+    # Somtum custom maps (id >= 1e8) don't exist on osu!'s CDN/mirrors; serve the
+    # local .osz that bancho stored (mounted read-only). See somtum_assets router.
+    if beatmapset_id >= SOMTUM_SET_ID_FLOOR:
+        from pathlib import Path as _Path
+
+        from app.config import settings as _settings
+
+        osz = _Path(_settings.bancho_osz_dir) / f"{beatmapset_id}.osz"
+        if not osz.is_file():
+            raise RequestError(ErrorType.NOT_FOUND)
+        url = f"{str(_settings.server_url).rstrip('/')}/somtum/osz/{beatmapset_id}"
+        if link_only:
+            return PlainTextResponse(content=url, status_code=200)
+        return RedirectResponse(url)
+
     geoip_helper = get_geoip_helper()
     geo_info = geoip_helper.lookup(client_ip)
     country_code = geo_info.get("country_iso", "")

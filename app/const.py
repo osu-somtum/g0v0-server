@@ -1,4 +1,7 @@
-BANCHOBOT_ID = 2
+# Unified with bancho.py's canonical BanchoBot (id 1). bancho.py owns this row in
+# the shared `users`/`lazer_users` tables (see app/state/services.py sync triggers);
+# g0v0 points at the same id so both servers share ONE bot account.
+BANCHOBOT_ID = 1
 
 BACKUP_CODE_LENGTH = 10
 
