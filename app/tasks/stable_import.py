@@ -2,12 +2,15 @@
 
 Gated by `enable_stable_score_import`. Runs `sync_new()` every
 `stable_import_interval_seconds` so new stable plays appear on lazer profiles
-(Recent / Ranks / Most Played). One-time catch-up is the `backfill()` CLI
-(`scripts/import_stable_scores.py`). See app/service/stable_import.
+(Recent / Ranks / Most Played). Also subscribes to the `somtum:new_score`
+Redis channel so bancho.py can trigger an immediate import on score submission.
+One-time catch-up is the `backfill()` CLI (`scripts/import_stable_scores.py`).
+See app/service/stable_import.
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 
 from app.config import settings
@@ -68,3 +71,29 @@ if settings.enable_stable_score_import:
             await sync_teams()
         except Exception:
             logger.exception("Stable teams sync failed")
+
+    async def _score_notify_listener() -> None:
+        """Subscribe to `somtum:new_score` and trigger sync_new() immediately
+        when bancho.py publishes a new score, so the leaderboard updates within
+        seconds instead of waiting for the next scheduled poll."""
+        from app.dependencies.database import get_redis_pubsub
+        from app.service.stable_import import sync_new
+
+        pubsub = get_redis_pubsub()
+        await pubsub.subscribe("somtum:new_score")
+        logger.info("Subscribed to somtum:new_score for real-time score sync")
+        async for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+            try:
+                await sync_new()
+            except Exception:
+                logger.exception("Real-time score sync failed")
+
+    @get_scheduler().scheduled_job(
+        "date",
+        id="start_score_notify_listener",
+        run_date=datetime.now() + timedelta(seconds=10),
+    )
+    async def _boot_score_notify_listener() -> None:
+        asyncio.create_task(_score_notify_listener())
