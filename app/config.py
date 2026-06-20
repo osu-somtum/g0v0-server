@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     # relax key-presses into converted RX replays (stable relax replays store cursor
     # movement but no taps, so lazer would otherwise show all-misses).
     bancho_osu_dir: Annotated[str, Field(default="/bancho-osu"), "stable_import"]
+    # osu!lazer score simulator binary (built from osu-tumthai/osu.ScoreSimulator).
+    # Runs StandardisedScoreMigrationTools.UpdateFromLegacy on each imported stable
+    # score for exact total_score + maximum_statistics. Falls back to heuristic if absent.
+    bancho_sim_path: Annotated[str, Field(default="/bancho-sim/osu-score-sim"), "stable_import"]
     # bancho's clan avatar/banner assets (avatar/{id}.ext, banners/{id}.ext),
     # mounted read-only — bridged as g0v0 team flag/cover images.
     bancho_clan_assets_dir: Annotated[str, Field(default="/bancho-clan-assets"), "stable_import"]

@@ -2,7 +2,91 @@
 
 from __future__ import annotations
 
+import math
+
 from app.const import MAX_SCORE
+
+# osu!lazer ScoreProcessor.COMBO_EXPONENT — used in the stable→standardised conversion.
+_COMBO_EXPONENT = 0.5
+
+
+def _osu_std_combo_proportion(
+    max_combo: int, beatmap_max_combo: int, nmiss: int, acc: float
+) -> float:
+    """Dual-estimate newComboScoreProportion for osu!std.
+    Mirrors StandardisedScoreMigrationTools.convertFromLegacyTotalScore (case 0,
+    lines 214-292), using comboProportion ≈ max_combo/beatmap_max_combo because
+    we don't run the ScoreV1 simulator server-side.
+    """
+    if beatmap_max_combo == 0:
+        return 1.0
+    cp = min(max_combo / beatmap_max_combo, 1.0)
+    max_v1 = float(beatmap_max_combo ** 2)
+    max_std = float(beatmap_max_combo ** (1 + _COMBO_EXPONENT))
+    longest_v1 = float(max_combo ** 2)
+    longest_std = float(max_combo ** (1 + _COMBO_EXPONENT))
+
+    combo_v1 = max(max_v1 * cp / max(acc, 1e-10), longest_v1)
+
+    # Score-based estimate
+    n_repeat = math.floor(combo_v1 / longest_v1) if longest_v1 > 0 else 0
+    remaining_std = math.sqrt(combo_v1 - n_repeat * longest_v1) ** (1 + _COMBO_EXPONENT)
+    score_est = n_repeat * longest_std + remaining_std
+
+    # Object-count-based estimate
+    remaining_objects = beatmap_max_combo - max_combo - nmiss
+    combo_len = (combo_v1 - longest_v1) / remaining_objects if remaining_objects > 0 else 0.0
+    obj_est = longest_std + remaining_objects * (combo_len ** _COMBO_EXPONENT)
+
+    score_est = min(max(score_est, 0.0), max_std)
+    obj_est = min(max(obj_est, 0.0), max_std)
+    lower, upper = min(score_est, obj_est), max(score_est, obj_est)
+    estimated = min(0.3 * lower + 0.7 * upper, 1.2 * (lower + upper) / 2)
+    return estimated / max_std if max_std > 0 else 0.0
+
+
+def _catch_combo_proportion(
+    beatmap_max_combo: int, score_max_combo: int, nmiss: int
+) -> float:
+    """estimateComboProportionForCatch — log-scaled ScoreV1 catch combo model.
+    Mirrors StandardisedScoreMigrationTools.estimateComboProportionForCatch.
+    """
+    if beatmap_max_combo == 0:
+        return 1.0
+    if score_max_combo == 0:
+        return 0.0
+    if beatmap_max_combo == score_max_combo:
+        return 1.0
+
+    def _best_case(mc: int) -> float:
+        if mc == 0:
+            return 1.0
+        t = 0.5 * min(mc, 2)
+        if mc <= 2:
+            return t
+        t += (min(mc, 200) * (math.log(min(mc, 200)) - 1) + 2 - math.log(4)) / math.log(4)
+        if mc <= 200:
+            return t
+        t += (mc - 200) * math.log(200) / math.log(4)
+        return t
+
+    def _dropped(length: int) -> float:
+        length = min(length, 200)
+        return length * (1 + math.log(200) - math.log(max(length, 1))) / math.log(4)
+
+    best = _best_case(beatmap_max_combo)
+    remaining = beatmap_max_combo - (score_max_combo + nmiss)
+    dropped = 0.0
+    assumed_len = int(remaining / nmiss) if nmiss > 0 else 0
+    if assumed_len > 0:
+        assumed_count = int(remaining / assumed_len)
+        dropped += assumed_count * _dropped(assumed_len)
+        leftover = remaining - assumed_count * assumed_len
+        if leftover > 0:
+            dropped += _dropped(leftover)
+    else:
+        dropped = best - _best_case(score_max_combo)
+    return 1.0 - min(max(dropped / best, 0.0), 1.0) if best > 0 else 1.0
 from app.models.beatmap import BeatmapRankStatus
 from app.models.mods.definition import APIMod
 from app.models.score import GameMode, Rank
@@ -100,28 +184,56 @@ def grade_to_rank(grade: str) -> Rank:
     return _GRADE_TO_RANK.get((grade or "").upper(), Rank.D)
 
 
-def standardised_total_score(mode: int, accuracy: float, max_combo: int, beatmap_max_combo: int) -> int:
-    """Approximate osu!lazer's standardised (0..~1,000,000) total score from a
-    stable (ScoreV1) play.
+def standardised_total_score(
+    mode: int,
+    accuracy: float,
+    max_combo: int,
+    beatmap_max_combo: int,
+    nmiss: int = 0,
+    legacy_score: int = 0,
+    primary_objects: int = 0,
+) -> int:
+    """Convert a stable (ScoreV1) play to osu!lazer's standardised score (0..1,000,000).
 
-    Uses osu!'s real per-ruleset accuracy/combo split from
-    `StandardisedScoreMigrationTools.convertFromLegacyTotalScore` (the accuracy
-    portions are attribute-free), but with an attribute-free combo proportion
-    (`achieved_combo / beatmap_max_combo`) because we don't run a per-beatmap
-    ScoreV1 simulator to derive the exact max combo/accuracy/bonus scores. Bonus
-    (spinner) score is omitted. This is g0v0's display score; lazer derives both
-    its standardised and classic in-game numbers from it.
+    Implements StandardisedScoreMigrationTools.convertFromLegacyTotalScore per-ruleset:
+    - osu!std: dual-estimate combo proportion (COMBO_EXPONENT=0.5, max_combo, nmiss),
+               plus a slider-density correction: stable's combo count includes slider
+               ticks which contribute less in lazer's ScoreProcessor. We scale by
+               (primary_objects / beatmap_max_combo)^0.02 to compensate.
+    - catch:   log-scaled estimateComboProportionForCatch
+    - mania:   comboProportion = legacy_score / 1M (ScoreV1 mania has no acc portion)
+    - taiko:   max_combo / beatmap_max_combo (formula already matches)
+    Bonus (spinner/drumroll) score is omitted as it needs the beatmap simulator.
     """
     acc = min(max(accuracy, 0.0), 1.0)
-    cp = min(max_combo / beatmap_max_combo, 1.0) if beatmap_max_combo > 0 else acc
+
     if mode == 1:  # taiko
+        cp = min(max_combo / beatmap_max_combo, 1.0) if beatmap_max_combo > 0 else acc
         score = 250000 * cp + 750000 * acc**3.6
-    elif mode == 2:  # catch (combo-dominated; tiny-droplet split omitted)
+
+    elif mode == 2:  # catch — log-scaled combo model
+        cp = _catch_combo_proportion(beatmap_max_combo, max_combo, nmiss)
         score = MAX_SCORE * cp
-    elif mode == 3:  # mania
+
+    elif mode == 3:  # mania — ScoreV1 is all combo; no separate accuracy portion
+        cp = min(legacy_score / MAX_SCORE, 1.0) if legacy_score > 0 else (
+            min(max_combo / beatmap_max_combo, 1.0) if beatmap_max_combo > 0 else acc
+        )
         score = 850000 * cp + 150000 * acc ** (2 + 2 * acc)
-    else:  # osu! (0) and any relax/autopilot variants that map to ruleset 0
-        score = 500000 * cp * acc + 500000 * acc**5
+
+    else:  # osu! std (0) + relax/autopilot variants
+        if max_combo == 0 or acc == 0:
+            score = 500000 * acc**5
+        else:
+            new_cp = _osu_std_combo_proportion(max_combo, beatmap_max_combo, nmiss, acc)
+            score = 500000 * new_cp * acc + 500000 * acc**5
+            # Slider-density correction: stable's max_combo includes slider ticks which
+            # have lower weight in lazer's ScoreProcessor than circles. Scale the combo
+            # portion down proportionally. Exponent 0.02 is empirically calibrated.
+            if primary_objects > 0 and beatmap_max_combo > primary_objects:
+                correction = (primary_objects / beatmap_max_combo) ** 0.02
+                score = 500000 * new_cp * acc * correction + 500000 * acc**5
+
     return round(min(score, MAX_SCORE))
 
 

@@ -49,6 +49,9 @@ services:
       - ../bancho.py/.data/audio:/bancho-audio:ro
       # cached .osu files — used to synthesize relax taps into converted RX replays.
       - ../bancho.py/.data/osu:/bancho-osu:ro
+      # osu!lazer score simulator (C# tool) — runs exact StandardisedScoreMigrationTools
+      # on each imported stable score for accurate total_score + maximum_statistics.
+      - ./bin/score-simulator:/bancho-sim:ro
       # clan avatar/banner assets (the website's asset root) — bridged as g0v0
       # team flag/cover images. Holds avatar/, avatars/, banners/ + default.jpg.
       - /var/www/assets/clans:/bancho-clan-assets:ro

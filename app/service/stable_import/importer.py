@@ -46,6 +46,7 @@ from .mappings import (
     standardised_total_score,
 )
 from .replay import build_osr, synthesize_relax_replay
+from .simulator import simulate_batch
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -280,9 +281,14 @@ async def _import_one(
     rank = grade_to_rank(row["grade"])
     osr_src = Path(settings.bancho_osr_dir) / f"{int(row['id'])}.osr"
     has_replay = osr_src.is_file()
-    total_hits = int(row["n300"]) + int(row["n100"]) + int(row["n50"]) + int(row["nmiss"]) + int(row["ngeki"]) + int(
-        row["nkatu"]
-    )
+    # For osu!std (incl. relax/AP), ngeki/nkatu are combo-end annotations, NOT
+    # additional hit objects. Including them inflates maximum_statistics["great"],
+    # which the client uses in the classic display formula and over-counts the score.
+    # For other modes (taiko/catch/mania) ngeki/nkatu are real hit results.
+    if base_mode == 0:
+        total_hits = int(row["n300"]) + int(row["n100"]) + int(row["n50"]) + int(row["nmiss"])
+    else:
+        total_hits = int(row["n300"]) + int(row["n100"]) + int(row["n50"]) + int(row["nmiss"]) + int(row["ngeki"]) + int(row["nkatu"])
     bancho_score = int(row["score"])
     # g0v0/lazer's `total_score` is a *standardised* score (0..MAX_SCORE=1,000,000);
     # the client derives both its standardised and in-game classic numbers from it
@@ -292,7 +298,28 @@ async def _import_one(
     acc_fraction = float(row["acc"]) / 100.0
     bm = await session.get(Beatmap, beatmap_id)
     bm_max_combo = int(bm.max_combo) if bm is not None and bm.max_combo else 0
-    standardised = standardised_total_score(base_mode, acc_fraction, int(row["max_combo"]), bm_max_combo)
+
+    # Try exact simulation (C# StandardisedScoreMigrationTools); fall back to heuristic.
+    sim_results = await simulate_batch([{
+        "id": int(row["id"]), "beatmap_id": beatmap_id,
+        "bancho_mode": int(row["mode"]), "mods": int(row["mods"]),
+        "n300": int(row["n300"]), "n100": int(row["n100"]), "n50": int(row["n50"]),
+        "n_geki": int(row["ngeki"]), "n_katu": int(row["nkatu"]), "n_miss": int(row["nmiss"]),
+        "max_combo": int(row["max_combo"]), "legacy_score": int(row["score"]),
+    }])
+    sim = sim_results.get(int(row["id"]))
+    if sim:
+        standardised = int(sim["total_score"])
+        standardised_no_mods = int(sim["total_score_without_mods"])
+        sim_max_stats: dict | None = sim["maximum_statistics"]
+    else:
+        standardised = standardised_total_score(
+            base_mode, acc_fraction, int(row["max_combo"]), bm_max_combo,
+            nmiss=int(row["nmiss"]), legacy_score=int(row["score"]),
+            primary_objects=int(row["n300"]) + int(row["n100"]) + int(row["n50"]) + int(row["nmiss"]),
+        )
+        standardised_no_mods = standardised
+        sim_max_stats = None
 
     score = Score(
         beatmap_id=beatmap_id,
@@ -314,9 +341,9 @@ async def _import_one(
         nmiss=int(row["nmiss"]),
         ngeki=int(row["ngeki"]),
         nkatu=int(row["nkatu"]),
-        maximum_statistics={HitResult.GREAT: total_hits},
+        maximum_statistics=sim_max_stats if sim_max_stats else {HitResult.GREAT: total_hits},
         total_score=standardised,
-        total_score_without_mods=standardised,
+        total_score_without_mods=standardised_no_mods,
         classic_total_score=bancho_score,
         preserve=passed,
         processed=True,
@@ -500,39 +527,92 @@ async def rebuild_replays() -> dict[str, int]:
 
 
 async def recompute_scores() -> dict[str, int]:
-    """Recompute the standardised `total_score` of every already-imported score
-    with the current conversion formula, mirroring it into the leaderboard
-    best-score rows. DB-only; use after changing `standardised_total_score` so
-    existing scores get the new value without a destructive re-import.
+    """Recompute total_score, total_score_without_mods, and maximum_statistics for
+    every imported score using the C# simulator (falls back to heuristic when a
+    beatmap .osu is missing). Also mirrors total_score into total_score_best_scores.
     """
     updated = 0
-    async with AsyncSession(engine) as session:
+    bancho_engine = get_bancho_engine()
+    async with AsyncSession(engine) as session, bancho_engine.connect() as conn:
         await _ensure_state_table(session)
-        ids = (await session.execute(text("SELECT lazer_id FROM stable_score_map"))).scalars().all()
-        for sid in ids:
-            score = await session.get(Score, int(sid))
+        pairs = (await session.execute(text("SELECT bancho_id, lazer_id FROM stable_score_map"))).all()
+
+        # Build simulator input batch from bancho rows (authoritative source for mods/counts)
+        sim_inputs: list[dict] = []
+        pair_map: dict[int, int] = {}  # bancho_id → lazer_id
+        for bancho_id, lazer_id in pairs:
+            row = await fetch_score_by_id(conn, int(bancho_id))
+            if row is None:
+                continue
+            bm_row = await conn.execute(
+                text("SELECT id FROM maps WHERE md5 = :md5"), {"md5": row["map_md5"]}
+            )
+            bm_id_row = bm_row.first()
+            if bm_id_row is None:
+                continue
+            pair_map[int(bancho_id)] = int(lazer_id)
+            sim_inputs.append({
+                "id": int(bancho_id),
+                "beatmap_id": int(bm_id_row[0]),
+                "bancho_mode": int(row["mode"]),
+                "mods": int(row["mods"]),
+                "n300": int(row["n300"]), "n100": int(row["n100"]), "n50": int(row["n50"]),
+                "n_geki": int(row["ngeki"]), "n_katu": int(row["nkatu"]), "n_miss": int(row["nmiss"]),
+                "max_combo": int(row["max_combo"]),
+                "legacy_score": int(row["score"]),
+                # keep these for heuristic fallback
+                "_mode": int(row["mode"]),
+                "_acc": float(row["acc"]) / 100.0,
+                "_nmiss": int(row["nmiss"]),
+                "_n300": int(row["n300"]), "_n100": int(row["n100"]), "_n50": int(row["n50"]),
+            })
+
+        sim_results = await simulate_batch(sim_inputs)
+
+        for inp in sim_inputs:
+            bancho_id = int(inp["id"])
+            lazer_id = pair_map[bancho_id]
+            score = await session.get(Score, lazer_id)
             if score is None:
                 continue
-            bm = await session.get(Beatmap, score.beatmap_id)
+            bm = await session.get(Beatmap, inp["beatmap_id"])
             bm_max_combo = int(bm.max_combo) if bm is not None and bm.max_combo else 0
-            std = standardised_total_score(
-                int(score.gamemode),
-                float(score.accuracy),
-                int(score.max_combo),
-                bm_max_combo,
-            )
-            if score.total_score != std or score.total_score_without_mods != std:
+
+            sim = sim_results.get(bancho_id)
+            if sim:
+                std = int(sim["total_score"])
+                std_no_mods = int(sim["total_score_without_mods"])
+                new_max_stats = sim["maximum_statistics"]
+            else:
+                base_mode = _BANCHO_MODE_MAP.get(inp["_mode"], inp["_mode"] % 4)
+                std = standardised_total_score(
+                    base_mode, inp["_acc"], inp["max_combo"], bm_max_combo,
+                    nmiss=inp["_nmiss"], legacy_score=inp["legacy_score"],
+                    primary_objects=inp["_n300"] + inp["_n100"] + inp["_n50"] + inp["_nmiss"],
+                )
+                std_no_mods = std
+                new_max_stats = None
+
+            changed = (score.total_score != std
+                       or score.total_score_without_mods != std_no_mods
+                       or (new_max_stats and score.maximum_statistics != new_max_stats))
+            if changed:
                 score.total_score = std
-                score.total_score_without_mods = std
+                score.total_score_without_mods = std_no_mods
+                if new_max_stats:
+                    score.maximum_statistics = new_max_stats
                 session.add(score)
                 updated += 1
             await session.execute(
                 text("UPDATE total_score_best_scores SET total_score = :s WHERE score_id = :id"),
-                {"s": std, "id": int(sid)},
+                {"s": std, "id": lazer_id},
             )
         await session.commit()
     logger.info("Recomputed standardised scores | updated={u}", u=updated)
     return {"updated": updated}
+
+
+_BANCHO_MODE_MAP = {0: 0, 1: 1, 2: 2, 3: 3, 4: 0, 5: 1, 6: 2, 8: 0}
 
 
 async def refresh_custom_covers() -> dict[str, int]:

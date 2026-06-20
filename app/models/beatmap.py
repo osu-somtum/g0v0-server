@@ -110,14 +110,15 @@ class SearchQueryModel(BaseModel):
 
     q: str = Field("", description="Search keywords")
     c: Annotated[
-        list[Literal["recommended", "converts", "follows", "spotlights", "featured_artists"]],
+        list[Literal["recommended", "converts", "follows", "spotlights", "featured_artists", "somtum"]],
         BeforeValidator(_parse_list),
         PlainSerializer(lambda x: ".".join(x)),
     ] = Field(
         default_factory=list,
         description=(
             "General filters: recommended / converts (include converts) / "
-            "follows (followed mappers) / spotlights / featured_artists"
+            "follows (followed mappers) / spotlights / featured_artists / "
+            "somtum (osu!somtum-uploaded sets only)"
         ),
     )
     m: int | None = Field(None, description="Game mode", alias="m")

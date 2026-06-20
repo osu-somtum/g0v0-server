@@ -163,6 +163,12 @@ async def search_beatmapset(
         played_sets = await _search_user_played(session, current_user.id, query)
         return SearchBeatmapsetsResp(total=len(played_sets), beatmapsets=played_sets)
 
+    # "Somtum" filter: osu!somtum-uploaded sets only (id >= floor). Served purely
+    # from the local DB — the osu! API has nothing for these, so don't fetch remote.
+    if "somtum" in query.c:
+        somtum_sets = await _search_local_custom(session, query)
+        return SearchBeatmapsetsResp(total=len(somtum_sets), beatmapsets=somtum_sets)
+
     if (
         "recommended" in query.c
         or len(query.r) > 0
@@ -189,18 +195,7 @@ async def search_beatmapset(
         except HTTPError:
             remote = SearchBeatmapsetsResp(total=0, beatmapsets=[])
 
-    # Somtum custom maps (only on the first page; they're not in the osu! API).
-    local = [] if cursor else await _search_local_custom(session, query)
-    if not local:
-        return remote
-    seen = {ls.get("id") for ls in local}
-    merged = local + [b for b in remote.beatmapsets if b.get("id") not in seen]
-    return SearchBeatmapsetsResp(
-        total=remote.total + len(local),
-        beatmapsets=merged,
-        cursor=remote.cursor,
-        cursor_string=remote.cursor_string,
-    )
+    return remote
 
 
 @router.get(
