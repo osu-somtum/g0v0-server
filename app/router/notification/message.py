@@ -27,6 +27,8 @@ from app.models.notification import ChannelMessage, ChannelMessageTeam
 from app.router.v2 import api_v2_router as router
 from app.service.redis_message_system import redis_message_system
 
+from app.const import BANCHOBOT_ID
+
 from .banchobot import bot
 from .server import server
 
@@ -410,6 +412,10 @@ async def create_new_pm(
     await session.refresh(channel)
     message_resp = await ChatMessageModel.transform(msg, user=current_user, includes=["sender"])
     await server.send_message_to_channel(message_resp)
+
+    if req.target_id == BANCHOBOT_ID and req.message.startswith("!"):
+        await bot.try_handle(current_user, channel, req.message, session)
+
     return {
         "channel": channel_resp,
         "message": message_resp,

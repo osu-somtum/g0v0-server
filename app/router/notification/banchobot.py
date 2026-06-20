@@ -362,3 +362,44 @@ async def _pr(user: User, args: list[str], session: AsyncSession, channel: ChatC
     if len(args) >= 1:
         gamemode = GameMode.parse(args[0])
     return await _score(user.id, session, include_fail=False, gamemode=gamemode)
+
+
+@bot.command("top")
+async def _top(user: User, args: list[str], session: AsyncSession, channel: ChatChannel) -> str:
+    """Show top 10 best scores for a user. Usage: !top [username] [mode]"""
+    target = user
+    gamemode = None
+    for arg in args:
+        parsed = GameMode.parse(arg.upper())
+        if parsed is not None:
+            gamemode = parsed
+        else:
+            found = (await session.exec(select(User).where(User.username == arg))).first()
+            if found:
+                target = found
+            else:
+                return f"User '{arg}' not found."
+
+    if gamemode is None:
+        gamemode = target.playmode
+
+    scores = (
+        await session.exec(
+            select(Score)
+            .where(Score.user_id == target.id, col(Score.passed).is_(True), Score.gamemode == gamemode)
+            .options(joinedload(Score.beatmap))
+            .order_by(col(Score.pp).desc())
+            .limit(10)
+        )
+    ).all()
+
+    if not scores:
+        return f"No scores for {target.username} ({gamemode.name.lower()})."
+
+    lines = [f"Top 10 for {target.username} ({gamemode.name.lower()}):"]
+    for idx, s in enumerate(scores, 1):
+        lines.append(
+            f"#{idx} {s.beatmap.beatmapset.title} [{s.beatmap.version}]"
+            f" {s.pp:.2f}pp {s.accuracy:.2%} {s.rank.name.upper()}"
+        )
+    return "\n".join(lines)
