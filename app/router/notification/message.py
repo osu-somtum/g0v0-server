@@ -6,6 +6,10 @@ chat messages within channels.
 
 from typing import Annotated
 
+import asyncio
+import json
+import uuid
+
 from app.database import ChatChannelModel
 from app.database.chat import (
     ChannelType,
@@ -17,7 +21,7 @@ from app.database.chat import (
     UserSilenceResp,
 )
 from app.database.user import User
-from app.dependencies.database import Database, Redis, redis_message_client
+from app.dependencies.database import Database, Redis, get_redis, redis_message_client
 from app.dependencies.param import BodyOrForm
 from app.dependencies.user import get_current_user
 from app.helpers import api_doc
@@ -35,6 +39,41 @@ from .server import server
 from fastapi import Depends, Path, Query, Security
 from pydantic import BaseModel, Field
 from sqlmodel import col, select
+
+
+async def _forward_to_bot(user: User, message: str) -> str | None:
+    """Forward a !command to somtum-bot via Redis pubsub. Returns reply or None on timeout."""
+    parts = message[1:].strip().split()
+    if not parts:
+        return None
+    trigger, *args = parts
+    msg_id = str(uuid.uuid4())
+    r = get_redis()
+    reply_key = f"somtum:bot:reply:{msg_id}"
+    pubsub = r.pubsub()
+    await pubsub.subscribe(reply_key)
+    try:
+        await r.publish(
+            "somtum:bot:cmd",
+            json.dumps({
+                "id": msg_id, "source": "lazer",
+                "user_id": user.id, "username": user.username,
+                "trigger": trigger.lower(), "args": args,
+            }),
+        )
+
+        async def _wait() -> str:
+            async for msg in pubsub.listen():
+                if msg["type"] == "message":
+                    return json.loads(msg["data"])["text"]
+            return ""
+
+        return await asyncio.wait_for(_wait(), timeout=2.0)
+    except asyncio.TimeoutError:
+        return None
+    finally:
+        await pubsub.unsubscribe(reply_key)
+        await pubsub.aclose()
 
 
 class KeepAliveResp(BaseModel):
@@ -173,7 +212,11 @@ async def send_message(
 
     # 处理机器人命令
     if is_bot_command:
-        await bot.try_handle(current_user, db_channel, req.message, session)
+        reply = await _forward_to_bot(current_user, req.message)
+        if reply:
+            await bot.send_reply(current_user, reply, session, src_channel=db_channel)
+        else:
+            await bot.try_handle(current_user, db_channel, req.message, session)
 
     await session.refresh(current_user)
     # Create temporary ChatMessage object for notification system (only for PM and team channels)
@@ -414,7 +457,11 @@ async def create_new_pm(
     await server.send_message_to_channel(message_resp)
 
     if req.target_id == BANCHOBOT_ID and req.message.startswith("!"):
-        await bot.try_handle(current_user, channel, req.message, session)
+        reply = await _forward_to_bot(current_user, req.message)
+        if reply:
+            await bot.send_reply(current_user, reply, session, src_channel=channel)
+        else:
+            await bot.try_handle(current_user, channel, req.message, session)
 
     return {
         "channel": channel_resp,
