@@ -70,9 +70,9 @@ async def visible_to_current_user(user: User, current_user: User | None, session
     Returns:
         bool: True if the user should be visible, False otherwise.
     """
-    if user.id == BANCHOBOT_ID:
-        return False
     if current_user and current_user.id == user.id:
+        return True
+    if user.is_bot:
         return True
     return not await user.is_restricted(session)
 
@@ -100,7 +100,7 @@ async def search(
             where = (
                 col(User.username).ilike(f"%{q}%"),
                 ~User.is_restricted_query(col(User.id)),
-                User.id != BANCHOBOT_ID,
+                col(User.priv).bitwise_and(1) != 0,
             )
             users = (
                 await session.exec(
@@ -479,7 +479,7 @@ async def get_user_info_ruleset(
             )
         )
     ).first()
-    if not searched_user or searched_user.id == BANCHOBOT_ID:
+    if not searched_user:
         raise RequestError(ErrorType.USER_NOT_FOUND)
     searched_is_self = current_user is not None and current_user.id == searched_user.id
     should_not_show = not searched_is_self and await searched_user.is_restricted(session)
@@ -547,7 +547,7 @@ async def get_user_info(
             )
         )
     ).first()
-    if not searched_user or searched_user.id == BANCHOBOT_ID:
+    if not searched_user:
         raise RequestError(ErrorType.USER_NOT_FOUND)
     searched_is_self = current_user is not None and current_user.id == searched_user.id
     should_not_show = not searched_is_self and await searched_user.is_restricted(session)

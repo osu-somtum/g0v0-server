@@ -880,13 +880,13 @@ class User(AsyncAttrs, UserModel, table=True):
     async def is_restricted(self, session: AsyncSession) -> bool:
         """Check if the user is currently restricted.
 
-        A user is considered restricted if they have an active restriction in their account history.
-
-        Args:
-            session: The database session to use for the query.
+        Checks bancho.py's priv bitmask first (fast, no query), then falls back
+        to the lazer UserAccountHistory restriction log.
 
         Returns:
             True if the user is restricted, False otherwise.
         """
+        if not (self.priv & 1):  # Privileges.UNRESTRICTED bit cleared
+            return True
         active_restrictions = (await session.exec(select(self.is_restricted_query(self.id)))).first()
         return active_restrictions or False
