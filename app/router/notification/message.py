@@ -22,6 +22,11 @@ from app.database.chat import (
 )
 from app.database.user import User
 from app.dependencies.database import Database, Redis, get_redis, redis_message_client
+from app.config import settings as _settings
+
+import redis.asyncio as _aioredis
+# db=0 matches somtum-bot's subscription (g0v0's default client uses db=1)
+_bot_redis = _aioredis.from_url(_settings.redis_url, decode_responses=True, db=0)
 from app.dependencies.param import BodyOrForm
 from app.dependencies.user import get_current_user
 from app.helpers import api_doc
@@ -48,7 +53,7 @@ async def _forward_to_bot(user: User, message: str) -> str | None:
         return None
     trigger, *args = parts
     msg_id = str(uuid.uuid4())
-    r = get_redis()
+    r = _bot_redis
     reply_key = f"somtum:bot:reply:{msg_id}"
     pubsub = r.pubsub()
     await pubsub.subscribe(reply_key)
