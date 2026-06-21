@@ -104,6 +104,12 @@ async def lifespan(app: FastAPI):
     redis_message_system.start()
     start_scheduler()
 
+    try:
+        from app.services.irc_bridge import start as start_irc_bridge
+        await start_irc_bridge()
+    except ImportError:
+        pass  # irctokens not installed yet
+
     if not settings.enable_v2_ipc:
         await user_online_subscriber.start_subscribe()
 

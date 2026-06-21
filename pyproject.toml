@@ -10,6 +10,7 @@ dependencies = [
     "aiomysql>=0.2.0",
     "alembic>=1.12.1",
     "apscheduler>=3.11.0",
+    "irctokens>=2.0",
     "bcrypt>=4.1.2",
     "bleach>=6.4.0",
     "cryptography>=48.0.0",

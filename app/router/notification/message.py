@@ -21,12 +21,7 @@ from app.database.chat import (
     UserSilenceResp,
 )
 from app.database.user import User
-from app.dependencies.database import Database, Redis, get_redis, redis_message_client
-from app.config import settings as _settings
-
-import redis.asyncio as _aioredis
-# db=0 matches somtum-bot's subscription (g0v0's default client uses db=1)
-_bot_redis = _aioredis.from_url(_settings.redis_url, decode_responses=True, db=0)
+from app.dependencies.database import Database, Redis, redis_message_client
 from app.dependencies.param import BodyOrForm
 from app.dependencies.user import get_current_user
 from app.helpers import api_doc
@@ -47,38 +42,9 @@ from sqlmodel import col, select
 
 
 async def _forward_to_bot(user: User, message: str) -> str | None:
-    """Forward a !command to somtum-bot via Redis pubsub. Returns reply or None on timeout."""
-    parts = message[1:].strip().split()
-    if not parts:
-        return None
-    trigger, *args = parts
-    msg_id = str(uuid.uuid4())
-    r = _bot_redis
-    reply_key = f"somtum:bot:reply:{msg_id}"
-    pubsub = r.pubsub()
-    await pubsub.subscribe(reply_key)
-    try:
-        await r.publish(
-            "somtum:bot:cmd",
-            json.dumps({
-                "id": msg_id, "source": "lazer",
-                "user_id": user.id, "username": user.username,
-                "trigger": trigger.lower(), "args": args,
-            }),
-        )
-
-        async def _wait() -> str:
-            async for msg in pubsub.listen():
-                if msg["type"] == "message":
-                    return json.loads(msg["data"])["text"]
-            return ""
-
-        return await asyncio.wait_for(_wait(), timeout=2.0)
-    except asyncio.TimeoutError:
-        return None
-    finally:
-        await pubsub.unsubscribe(reply_key)
-        await pubsub.aclose()
+    """Forward a !command to somtum-bot via IRC bridge. Returns reply or None on timeout."""
+    from app.services.irc_bridge import ask_bot
+    return await ask_bot(user.id, user.username, message)
 
 
 class KeepAliveResp(BaseModel):
